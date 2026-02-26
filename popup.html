@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lululemon Tracker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-left">
+      <svg class="logo" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+      </svg>
+      <h1>Lulu Tracker</h1>
+    </div>
+    <button id="btn-refresh" class="icon-btn" title="Check all now">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="23 4 23 10 17 10"/>
+        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="products">Products</button>
+    <button class="tab" data-tab="collections">Collections</button>
+  </div>
+
+  <!-- ═══ Tab: Products ═══ -->
+  <div id="tab-products" class="tab-content active">
+    <div id="track-section" class="track-section hidden">
+      <div id="current-product-preview" class="current-preview"></div>
+      <button id="btn-track" class="btn-track">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        </svg>
+        Track This Product
+      </button>
+    </div>
+    <div id="message" class="message hidden"></div>
+    <div id="product-list" class="product-list">
+      <div id="empty-state" class="empty-state">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35">
+          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+        </svg>
+        <p>No products tracked yet.</p>
+        <p class="hint">Visit a Lululemon product page and click "Track This Product".</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Tab: Collections ═══ -->
+  <div id="tab-collections" class="tab-content">
+    <!-- Save current collection page -->
+    <div id="collection-save-section" class="collection-save-section hidden">
+      <div id="collection-page-preview" class="collection-page-preview"></div>
+      <button id="btn-save-collection" class="btn-track">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+        Save This Collection
+      </button>
+    </div>
+
+    <!-- Add manually -->
+    <div class="collection-add-form">
+      <input id="collection-name-input" type="text" placeholder="Name (e.g. MVT + Pace Breaker)" maxlength="60">
+      <input id="collection-url-input" type="text" placeholder="Paste Lululemon collection URL">
+      <button id="btn-add-collection" class="btn-add-collection">+ Add</button>
+    </div>
+
+    <!-- Saved collections list -->
+    <div id="collection-list" class="collection-list">
+      <div id="collection-empty" class="empty-state">
+        <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.35">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+        <p>No collections saved yet.</p>
+        <p class="hint">Save a filtered collection page or paste a URL above.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <span id="last-check"></span>
+    <span>Checks every hour</span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

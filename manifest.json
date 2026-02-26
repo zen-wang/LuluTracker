@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "name": "Lululemon Product Tracker",
+  "version": "1.0.0",
+  "description": "Track Lululemon product availability, price changes, new colors, and stock status.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://shop.lululemon.com/*",
+    "https://www.lululemon.com.hk/*",
+    "https://www.lululemon.com.au/*",
+    "https://www.lululemon.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://shop.lululemon.com/*",
+        "https://www.lululemon.com.hk/*",
+        "https://www.lululemon.com.au/*",
+        "https://www.lululemon.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
