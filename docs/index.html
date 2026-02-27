@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LuluTracker — Privacy Policy</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      color: #1a1a1a;
+      background: #fff;
+      line-height: 1.7;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 8px;
+    }
+    .last-updated {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+    h2 {
+      font-size: 20px;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+    p, li {
+      font-size: 16px;
+      margin-bottom: 12px;
+    }
+    ul {
+      padding-left: 24px;
+      margin-bottom: 16px;
+    }
+    a { color: #d31334; }
+    .footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid #eee;
+      color: #888;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🏷️ LuluTracker — Privacy Policy</h1>
+    <p class="last-updated">Last updated: February 27, 2026</p>
+
+    <p>LuluTracker is a Chrome extension that tracks product availability, prices, and stock status on Lululemon websites. Your privacy is important to us. This policy explains what data the extension accesses and how it is handled.</p>
+
+    <h2>Data Collection</h2>
+    <p><strong>LuluTracker does not collect, store, or transmit any personal data to external servers.</strong></p>
+    <p>The extension does not use analytics, cookies, tracking pixels, or any third-party data collection services. There is no backend server. No account or login is required.</p>
+
+    <h2>Data Stored Locally</h2>
+    <p>The extension stores the following data locally on your device using Chrome's <code>chrome.storage.local</code> API:</p>
+    <ul>
+      <li>Product names, colors, sizes, prices, and stock status of products you choose to track</li>
+      <li>Product page URLs and thumbnail images</li>
+      <li>Collection URLs and filter preferences you save</li>
+    </ul>
+    <p>This data never leaves your browser. It is not sent to any server, third party, or external service. You can delete all stored data at any time by removing the extension from Chrome.</p>
+
+    <h2>Website Access</h2>
+    <p>The extension accesses the following domains to read publicly available product information:</p>
+    <ul>
+      <li>shop.lululemon.com</li>
+      <li>www.lululemon.com.hk</li>
+      <li>www.lululemon.com.au</li>
+    </ul>
+    <p>The extension reads product data (prices, availability, colors) from these pages in the same way your browser does when you visit them normally. It does not log in, submit forms, place orders, or access any account information.</p>
+
+    <h2>Permissions</h2>
+    <p>The extension requests the following Chrome permissions, each for a specific purpose:</p>
+    <ul>
+      <li><strong>storage</strong> — save your tracked products and collections locally</li>
+      <li><strong>alarms</strong> — schedule periodic background checks (once per hour)</li>
+      <li><strong>notifications</strong> — send desktop alerts when a product's status changes</li>
+      <li><strong>activeTab</strong> — read product data from the Lululemon page you are currently viewing</li>
+      <li><strong>scripting</strong> — inject the content script to extract product information from the page</li>
+    </ul>
+
+    <h2>Data Sharing</h2>
+    <p>Your data is <strong>never</strong>:</p>
+    <ul>
+      <li>Sold to third parties</li>
+      <li>Shared with third parties</li>
+      <li>Used for advertising or marketing</li>
+      <li>Transferred to any external server</li>
+      <li>Used for purposes unrelated to the extension's core functionality</li>
+    </ul>
+
+    <h2>Children's Privacy</h2>
+    <p>LuluTracker does not knowingly collect any data from children under the age of 13.</p>
+
+    <h2>Changes to This Policy</h2>
+    <p>If this privacy policy is updated, the changes will be posted on this page with a revised "Last updated" date. Continued use of the extension after changes constitutes acceptance of the updated policy.</p>
+
+    <h2>Contact</h2>
+    <p>If you have questions about this privacy policy, please open an issue on the <a href="https://github.com/user/LuluTracker">GitHub repository</a>.</p>
+
+    <div class="footer">
+      LuluTracker is an independent, open-source project. It is not affiliated with, endorsed by, or associated with lululemon athletica inc.
+    </div>
+  </div>
+</body>
+</html>
