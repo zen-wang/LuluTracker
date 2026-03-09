@@ -256,6 +256,11 @@ async function renderProductList() {
     const statusLabel = getStatusLabel(product.stockStatus);
     const statusClass = product.stockStatus || 'in_stock';
     const saleBadgeHtml = product.onSale ? '<span class="status-badge on_sale">On Sale</span>' : '';
+
+    const fetchFailures = product.consecutiveFailures || 0;
+    const fetchErrorHtml = fetchFailures >= 3
+      ? `<span class="status-badge fetch_error" title="${escapeHtml(product.lastFetchError || 'Check failed')}">⚠ Check Failed</span>`
+      : '';
     const changeHtml = hasRecentChange ? '<span class="change-dot" title="Recent change detected"></span>' : '';
     const markdownHtml = product.markdownUrl
       ? `<a class="markdown-link" href="${escapeHtml(product.markdownUrl)}" title="View on We Made Too Much">🏷️ View discount</a>`
@@ -271,6 +276,7 @@ async function renderProductList() {
         <div class="product-status-row">
           <span class="status-badge ${statusClass}">${statusLabel}</span>
           ${saleBadgeHtml}
+          ${fetchErrorHtml}
           ${priceHtml}
           ${markdownHtml}
         </div>
