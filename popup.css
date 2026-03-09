@@ -637,3 +637,16 @@ body {
   vertical-align: middle;
   letter-spacing: 0.5px;
 }
+
+
+/* Fetch error badge — shown when background checks fail 3+ times */
+.status-badge.fetch_error {
+  background: #fff3e0;
+  color: #e65100;
+  animation: pulse 2s infinite;
+}
+
+/* Fetch error card highlight */
+.product-card.has-fetch-error {
+  border-left: 3px solid #e65100;
+}
