@@ -234,6 +234,7 @@ async function renderProductList() {
     const hasRecentChange = product.lastChange &&
       (Date.now() - product.lastChange.timestamp) < 2 * 60 * 60 * 1000;
     if (hasRecentChange) card.classList.add('has-change');
+    if (product.discontinued) card.classList.add('is-discontinued');
 
     card.addEventListener('click', (e) => {
       if (e.target.closest('.btn-delete') || e.target.closest('.toggle')) return;
@@ -254,12 +255,16 @@ async function renderProductList() {
     }
 
     const statusLabel = getStatusLabel(product.stockStatus);
-    const statusClass = product.stockStatus || 'in_stock';
+    const statusClass = product.discontinued ? 'discontinued' : (product.stockStatus || 'in_stock');
     const saleBadgeHtml = product.onSale ? '<span class="status-badge on_sale">On Sale</span>' : '';
 
     const fetchFailures = product.consecutiveFailures || 0;
     const fetchErrorHtml = fetchFailures >= 3
       ? `<span class="status-badge fetch_error" title="${escapeHtml(product.lastFetchError || 'Check failed')}">⚠ Check Failed</span>`
+
+    const discontinuedHtml = product.discontinued
+      ? '<span class="status-badge discontinued">Discontinued</span>'
+      : '';
       : '';
     const changeHtml = hasRecentChange ? '<span class="change-dot" title="Recent change detected"></span>' : '';
     const markdownHtml = product.markdownUrl
@@ -279,6 +284,7 @@ async function renderProductList() {
           <span class="status-badge ${statusClass}">${statusLabel}</span>
           ${saleBadgeHtml}
           ${fetchErrorHtml}
+            ${discontinuedHtml}
           ${priceHtml}
           ${markdownHtml}
         </div>
@@ -846,6 +852,7 @@ function getStatusLabel(status) {
     case 'low_stock': return '⚠ Low Stock';
     case 'sold_out': return 'Sold Out';
     case 'in_stock':
+    case 'discontinued': return '\u274C Discontinued';
     default: return 'In Stock';
   }
 }
@@ -925,3 +932,4 @@ function escapeHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
