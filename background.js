@@ -10,6 +10,8 @@
  *    tracks consecutive failures, and surfaces fetch health in the popup
  * 5. Price history — stores price changes over time per product,
  *    enabling "lowest price ever" display and trend tracking
+ * 6. Notification grouping — batches notifications by type, sends summaries
+ *    when 3+ of the same type fire at once, with per-product cooldowns
  */
 
 const CHECK_INTERVAL_MINUTES = 60;
@@ -17,6 +19,8 @@ const ALARM_NAME = 'lululemon-check';
 const RETRY_DELAY_MS = 5000;       // Wait 5s before retrying a failed fetch
 const MAX_DISPLAY_FAILURES = 3;    // Show warning in popup after this many consecutive failures
 const MAX_PRICE_HISTORY = 90;   // Keep at most 90 price history entries per product
+const NOTIFICATION_GROUP_THRESHOLD = 3; // Group into summary if 3+ notifications of same type
+const NOTIFICATION_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4h cooldown per product+change type
 
 /**
  * Extract color code from a product URL (US or international format).
@@ -181,7 +185,7 @@ async function checkAllProducts() {
     if (trackedProducts.length === 0) return;
 
   const updatedProducts = [];
-    const pendingNotifications = [];
+  const notifItems = [];
 
   // ── Deduplication ──
   const fetchCache = {};
@@ -237,19 +241,20 @@ async function checkAllProducts() {
             appendPriceHistory(product, markdownTransition.change.salePrice, true);
           }
                                       changes = changes.filter(c => !(c.type === 'status_change' && c.to === 'sold_out'));
-                                      const notif = await sendNotification(product, markdownTransition.change);
-                                      if (notif) {
-                                                    notif.url = markdownTransition.discountUrl;
-                                                    pendingNotifications.push(notif);
-                                      }
+          if (await shouldNotify(product, markdownTransition.change.type)) {
+            notifItems.push({
+              product, change: markdownTransition.change, url: markdownTransition.discountUrl,
+            });
+          }
                           }
                 }
 
-          // Send remaining notifications
-          for (const change of changes) {
-                    const notif = await sendNotification(product, change);
-                    if (notif) pendingNotifications.push(notif);
+        // Collect remaining notifications (with cooldown check)
+        for (const change of changes) {
+          if (await shouldNotify(product, change.type)) {
+            notifItems.push({ product, change, url: product.url });
           }
+        }
 
           updatedProducts.push({
                     ...product,
@@ -283,13 +288,16 @@ async function checkAllProducts() {
         }
   }
 
-  // Write all notification URL mappings at once
-  if (pendingNotifications.length > 0) {
-        const { notificationMap = {} } = await chrome.storage.local.get('notificationMap');
-        for (const notif of pendingNotifications) {
-                notificationMap[notif.id] = notif.url;
-        }
-        await chrome.storage.local.set({ notificationMap });
+  // ── Dispatch grouped notifications ──
+  const sentNotifications = await groupAndSendNotifications(notifItems);
+
+  // Write notification URL mappings for click handling
+  if (sentNotifications.length > 0) {
+    const { notificationMap = {} } = await chrome.storage.local.get('notificationMap');
+    for (const notif of sentNotifications) {
+      notificationMap[notif.id] = notif.url;
+    }
+    await chrome.storage.local.set({ notificationMap });
   }
 
   await chrome.storage.local.set({ trackedProducts: updatedProducts });
@@ -598,6 +606,154 @@ function detectChanges(oldProduct, newData) {
   }
 
   return changes;
+}
+
+// ══════════════════════════════════════════════════════════
+// FEATURE 6: Smarter notification grouping
+//
+// Instead of firing one OS notification per change, we:
+//   1. Check a per-product cooldown (4h) to avoid re-alerting
+//   2. Collect all notifications from a check cycle
+//   3. If 3+ share the same type, send a single summary
+//   4. Otherwise send individual notifications as before
+// ══════════════════════════════════════════════════════════
+
+/**
+ * Check whether a notification should fire for this product + change type.
+ * Uses notificationCooldowns in storage: { "productId:color:changeType": timestamp }
+ */
+async function shouldNotify(product, changeType) {
+  const { notificationCooldowns = {} } = await chrome.storage.local.get('notificationCooldowns');
+  const key = `${product.productId}:${product.color}:${changeType}`;
+  const lastNotified = notificationCooldowns[key] || 0;
+  return (Date.now() - lastNotified) > NOTIFICATION_COOLDOWN_MS;
+}
+
+/**
+ * Record that we just notified for this product + change type.
+ */
+async function recordNotification(product, changeType) {
+  const { notificationCooldowns = {} } = await chrome.storage.local.get('notificationCooldowns');
+  const key = `${product.productId}:${product.color}:${changeType}`;
+  notificationCooldowns[key] = Date.now();
+
+  // Prune old entries (older than 24h) to prevent unbounded growth
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const [k, ts] of Object.entries(notificationCooldowns)) {
+    if (ts < cutoff) delete notificationCooldowns[k];
+  }
+
+  await chrome.storage.local.set({ notificationCooldowns });
+}
+
+/**
+ * Group collected notification items by type and dispatch.
+ * If 3+ items share the same type, send a summary notification.
+ * Otherwise send individual notifications.
+ * Returns array of { id, url } for notification-click mapping.
+ */
+async function groupAndSendNotifications(notifItems) {
+  if (notifItems.length === 0) return [];
+
+  // Group by change type
+  const byType = {};
+  for (const item of notifItems) {
+    const t = item.change.type;
+    if (!byType[t]) byType[t] = [];
+    byType[t].push(item);
+  }
+
+  const results = [];
+
+  for (const [type, items] of Object.entries(byType)) {
+    if (items.length >= NOTIFICATION_GROUP_THRESHOLD) {
+      // Send a summary notification
+      const notif = await sendSummaryNotification(type, items);
+      if (notif) results.push(notif);
+    } else {
+      // Send individual notifications
+      for (const item of items) {
+        const notif = await sendNotification(item.product, item.change);
+        if (notif) {
+          if (item.url) notif.url = item.url;
+          results.push(notif);
+        }
+        await recordNotification(item.product, type);
+      }
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Send a single summary notification for multiple items of the same type.
+ */
+async function sendSummaryNotification(type, items) {
+  let title = '';
+  let message = '';
+  const count = items.length;
+  const names = items.slice(0, 4).map(i => i.product.name);
+  const nameList = count > 4
+    ? names.join(', ') + ` + ${count - 4} more`
+    : names.join(', ');
+
+  switch (type) {
+    case 'status_change': {
+      const soldOut = items.filter(i => i.change.to === 'sold_out');
+      const backIn = items.filter(i => i.change.to === 'in_stock');
+      if (soldOut.length >= backIn.length) {
+        title = `\u274C ${count} Products Sold Out`;
+      } else {
+        title = `\u{1F389} ${count} Products Back in Stock!`;
+      }
+      message = nameList;
+      break;
+    }
+    case 'price_change': {
+      const drops = items.filter(i => i.change.to < i.change.from);
+      if (drops.length >= items.length / 2) {
+        title = `\u{1F4C9} ${count} Price Drops!`;
+      } else {
+        title = `\u{1F4B0} ${count} Price Changes`;
+      }
+      message = nameList;
+      break;
+    }
+    case 'went_on_sale':
+      title = `\u{1F3F7}\uFE0F ${count} Products Now On Sale!`;
+      message = nameList;
+      break;
+    case 'new_color':
+      title = `\u{1F3A8} New Colors for ${count} Products`;
+      message = nameList;
+      break;
+    case 'moved_to_markdown':
+      title = `\u{1F3F7}\uFE0F ${count} Products Moved to WMTM!`;
+      message = nameList;
+      break;
+    default:
+      title = `\u{1F514} ${count} Product Updates`;
+      message = nameList;
+  }
+
+  const notifId = `lulu-batch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  await chrome.notifications.create(notifId, {
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title,
+    message,
+    priority: 2,
+    requireInteraction: true,
+  });
+
+  // Record cooldown for all items in the batch
+  for (const item of items) {
+    await recordNotification(item.product, type);
+  }
+
+  // Link notification click to the first product in batch
+  return { id: notifId, url: items[0].url || items[0].product.url };
 }
 
 // ── Send OS notification ─────────────────────────────────
