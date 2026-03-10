@@ -8,12 +8,15 @@
  * 3. Responds to 'productPageChanged' from content script MutationObserver
  * 4. Retry + error handling — retries failed fetches once after a delay,
  *    tracks consecutive failures, and surfaces fetch health in the popup
+ * 5. Price history — stores price changes over time per product,
+ *    enabling "lowest price ever" display and trend tracking
  */
 
 const CHECK_INTERVAL_MINUTES = 60;
 const ALARM_NAME = 'lululemon-check';
 const RETRY_DELAY_MS = 5000;       // Wait 5s before retrying a failed fetch
 const MAX_DISPLAY_FAILURES = 3;    // Show warning in popup after this many consecutive failures
+const MAX_PRICE_HISTORY = 90;   // Keep at most 90 price history entries per product
 
 /**
  * Extract color code from a product URL (US or international format).
@@ -142,6 +145,35 @@ async function fetchWithRetry(url) {
   return { html: null, ok: false, error: 'Unknown fetch failure' };
 }
 
+
+// ══════════════════════════════════════════════════════════
+// FEATURE 5: Price history tracking
+//
+// Stores a priceHistory array on each product:
+//   [{ price, date, wasOnSale }]
+// Appends a new entry whenever the effective price changes.
+// Capped at MAX_PRICE_HISTORY entries (oldest trimmed).
+// ══════════════════════════════════════════════════════════
+function appendPriceHistory(product, newPrice, wasOnSale) {
+  if (newPrice === null || newPrice === undefined) return;
+  if (!product.priceHistory) product.priceHistory = [];
+
+  const last = product.priceHistory[product.priceHistory.length - 1];
+  // Only append if price actually changed or this is the first entry
+  if (last && last.price === newPrice && last.wasOnSale === wasOnSale) return;
+
+  product.priceHistory.push({
+    price: newPrice,
+    date: Date.now(),
+    wasOnSale: !!wasOnSale,
+  });
+
+  // Trim to max length (keep most recent)
+  if (product.priceHistory.length > MAX_PRICE_HISTORY) {
+    product.priceHistory = product.priceHistory.slice(-MAX_PRICE_HISTORY);
+  }
+}
+
 // ── Core: Check all tracked products ─────────────────────
 
 async function checkAllProducts() {
@@ -178,6 +210,11 @@ async function checkAllProducts() {
           product.consecutiveFailures = 0;
                 product.lastFetchError = null;
 
+
+      // ── Track price history ──
+      const effectivePrice = newData.currentPrice;
+      appendPriceHistory(product, effectivePrice, newData.onSale);
+
           let changes = detectChanges(product, newData);
 
           // ── Deduplicate new_color notifications ──
@@ -195,6 +232,10 @@ async function checkAllProducts() {
                               (hasSoldOutChange || product.trackNewColors)) {
                           markdownTransition = await checkMarkdownTransition(product, newData);
                           if (markdownTransition) {
+          // Track markdown sale price in history
+          if (markdownTransition.change && typeof markdownTransition.change.salePrice === 'number') {
+            appendPriceHistory(product, markdownTransition.change.salePrice, true);
+          }
                                       changes = changes.filter(c => !(c.type === 'status_change' && c.to === 'sold_out'));
                                       const notif = await sendNotification(product, markdownTransition.change);
                                       if (notif) {
@@ -227,6 +268,7 @@ async function checkAllProducts() {
                                 : product.lastChange,
                     markdownUrl: markdownTransition
                       ? markdownTransition.discountUrl : product.markdownUrl,
+        priceHistory: product.priceHistory || [],
                     // Ensure these fields persist
                     consecutiveFailures: 0,
                     lastFetchError: null,
@@ -686,6 +728,7 @@ async function addProduct(product) {
         lastChange: null,
         consecutiveFailures: 0,
         lastFetchError: null,
+    priceHistory: [],
   };
 
   // Immediately fetch the live page to establish the correct baseline
@@ -703,6 +746,11 @@ async function addProduct(product) {
                 newProduct.consecutiveFailures = 0;
                 newProduct.lastFetchError = null;
                 console.log(`[LuluTracker] Baseline fetch: ${liveData.availableColors.length} colors stored`);
+
+      // Initialize price history with the baseline price
+      if (newProduct.currentPrice) {
+        appendPriceHistory(newProduct, newProduct.currentPrice, newProduct.onSale);
+      }
         }
   } catch (err) {
         console.warn('[LuluTracker] Baseline fetch failed, using content script data:', err);
