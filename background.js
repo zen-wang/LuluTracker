@@ -14,6 +14,8 @@
  *    when 3+ of the same type fire at once, with per-product cooldowns
  * 7. HK/AU discount detection — detects SFCC markdown prices via
  *    cross-variant price comparison and markdown-prices HTML class
+ * 8. Product discontinuation detection — marks products as discontinued
+ *     after 3 consecutive 404 responses, skips them in future checks
  */
 
 const CHECK_INTERVAL_MINUTES = 60;
@@ -23,6 +25,7 @@ const MAX_DISPLAY_FAILURES = 3;    // Show warning in popup after this many cons
 const MAX_PRICE_HISTORY = 90;   // Keep at most 90 price history entries per product
 const NOTIFICATION_GROUP_THRESHOLD = 3; // Group into summary if 3+ notifications of same type
 const NOTIFICATION_COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4h cooldown per product+change type
+const MAX_CONSECUTIVE_404 = 3;       // Mark product discontinued after this many consecutive 404s
 
 /**
  * Extract color code from a product URL (US or international format).
@@ -88,7 +91,8 @@ async function updateBadge() {
           (p.consecutiveFailures || 0) >= MAX_DISPLAY_FAILURES
                                                  ).length;
 
-  const alertCount = stockAlerts + saleAlerts + fetchErrors;
+  const discontinuedCount = trackedProducts.filter(p => p.discontinued).length;
+  const alertCount = stockAlerts + saleAlerts + fetchErrors + discontinuedCount;
 
   if (alertCount > 0) {
         chrome.action.setBadgeText({ text: alertCount.toString() });
@@ -195,6 +199,12 @@ async function checkAllProducts() {
 
   for (const product of trackedProducts) {
         try {
+
+        // Skip discontinued products
+        if (product.discontinued) {
+          updatedProducts.push(product);
+          continue;
+        }
                 const baseUrl = product.url.split('?')[0];
                 let newData;
 
@@ -208,13 +218,32 @@ async function checkAllProducts() {
           if (!newData) {
                     // fetchProductStatus returned null — fetch failed or parse failed
                   // The product's consecutiveFailures was already incremented inside fetchProductStatus
-                  updatedProducts.push(product);
-                    continue;
+          // Check if this is a persistent 404
+          if (product.lastFetchError && product.lastFetchError.includes("404")) {
+            product.consecutive404s = (product.consecutive404s || 0) + 1;
+            if (product.consecutive404s >= MAX_CONSECUTIVE_404 && !product.discontinued) {
+              product.discontinued = true;
+              product.discontinuedAt = Date.now();
+              console.log(`[LuluTracker] Product marked discontinued after ${product.consecutive404s} consecutive 404s`);
+              if (await shouldNotify(product, "discontinued")) {
+                notifItems.push({
+                  product,
+                  change: { type: "discontinued" },
+                  url: product.url,
+                });
+              }
+            }
+          } else {
+            product.consecutive404s = 0;
+          }
+          updatedProducts.push(product);
+          continue;
           }
 
           // ── Fetch succeeded — reset failure tracking ──
           product.consecutiveFailures = 0;
                 product.lastFetchError = null;
+          product.consecutive404s = 0;
 
 
       // ── Track price history ──
@@ -279,14 +308,20 @@ async function checkAllProducts() {
                     // Ensure these fields persist
                     consecutiveFailures: 0,
                     lastFetchError: null,
+          consecutive404s: 0,
+          discontinued: product.discontinued || false,
+          discontinuedAt: product.discontinuedAt || null,
           });
         } catch (err) {
                 console.error(`[LuluTracker] Error checking ${product.name}:`, err);
-                updatedProducts.push({
-                          ...product,
-                          consecutiveFailures: (product.consecutiveFailures || 0) + 1,
-                          lastFetchError: err.message || 'Unexpected error during check',
-                });
+        updatedProducts.push({
+          ...product,
+          consecutiveFailures: (product.consecutiveFailures || 0) + 1,
+          lastFetchError: err.message || 'Unexpected error during check',
+          consecutive404s: product.consecutive404s || 0,
+          discontinued: product.discontinued || false,
+          discontinuedAt: product.discontinuedAt || null,
+        });
         }
   }
 
@@ -764,6 +799,10 @@ async function sendSummaryNotification(type, items) {
       title = `\u{1F3F7}\uFE0F ${count} Products Moved to WMTM!`;
       message = nameList;
       break;
+    case 'discontinued':
+      title = `\u274C ${count} Products Discontinued`;
+      message = nameList;
+      break;
     default:
       title = `\u{1F514} ${count} Product Updates`;
       message = nameList;
@@ -816,6 +855,10 @@ async function sendNotification(product, change) {
             title = '🏷️ Moved to We Made Too Much!';
             message = `${productLabel}\nNow $${change.salePrice} (was $${change.listPrice})`;
             break;
+    case 'discontinued':
+      title = '\u274C Product Discontinued';
+      message = `${productLabel}\nThis product appears to have been removed from the store.`;
+      break;
     default:
             return null;
   }
@@ -838,6 +881,7 @@ function getStatusTitle(status) {
       case 'low_stock': return '⚠️ Almost Sold Out!';
       case 'sold_out':  return '❌ Sold Out';
       case 'in_stock':  return '🎉 Back in Stock!';
+    case 'discontinued': return '\u274C Discontinued';
       default:          return '🔔 Status Changed';
     }
 }
@@ -916,6 +960,9 @@ async function addProduct(product) {
         lastChange: null,
         consecutiveFailures: 0,
         lastFetchError: null,
+    consecutive404s: 0,
+    discontinued: false,
+    discontinuedAt: null,
     priceHistory: [],
   };
 
