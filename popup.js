@@ -261,10 +261,10 @@ async function renderProductList() {
     const fetchFailures = product.consecutiveFailures || 0;
     const fetchErrorHtml = fetchFailures >= 3
       ? `<span class="status-badge fetch_error" title="${escapeHtml(product.lastFetchError || 'Check failed')}">⚠ Check Failed</span>`
+      : '';
 
     const discontinuedHtml = product.discontinued
       ? '<span class="status-badge discontinued">Discontinued</span>'
-      : '';
       : '';
     const changeHtml = hasRecentChange ? '<span class="change-dot" title="Recent change detected"></span>' : '';
     const markdownHtml = product.markdownUrl
@@ -291,13 +291,13 @@ async function renderProductList() {
         ${priceHistoryHtml}
         <div class="product-settings">
           <label class="toggle" title="Track new colors for this product line">
-            <input type="checkbox" ${product.trackNewColors ? 'checked' : ''} data-index="${index}">
+            <input type="checkbox" ${product.trackNewColors ? 'checked' : ''}>
             <span class="slider"></span>
           </label>
           <span class="toggle-label">New colors</span>
         </div>
       </div>
-      <button class="btn-delete" data-index="${index}" title="Stop tracking">
+      <button class="btn-delete" data-product-id="${escapeHtml(product.productId)}" data-color="${escapeHtml(product.color)}" data-size="${escapeHtml(product.size)}" title="Stop tracking">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
@@ -315,8 +315,13 @@ async function renderProductList() {
 
     card.querySelector('.btn-delete').addEventListener('click', async (e) => {
       e.stopPropagation();
-      const idx = parseInt(e.currentTarget.dataset.index);
-      await chrome.runtime.sendMessage({ action: 'removeProduct', index: idx });
+      const btn = e.currentTarget;
+      await chrome.runtime.sendMessage({
+        action: 'removeProduct',
+        productId: btn.dataset.productId,
+        color: btn.dataset.color,
+        size: btn.dataset.size,
+      });
       showMessage('Product removed.', 'info');
       await renderProductList();
     });
@@ -324,11 +329,13 @@ async function renderProductList() {
     const toggle = card.querySelector('.toggle input');
     toggle.addEventListener('change', async (e) => {
       e.stopPropagation();
-      const idx = parseInt(e.target.dataset.index);
-      const prods = await getProducts();
-      if (prods[idx]) {
-        prods[idx].trackNewColors = e.target.checked;
-        await chrome.storage.local.set({ trackedProducts: prods });
+      const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
+      const match = trackedProducts.find(p =>
+        p.productId === product.productId && p.color === product.color && p.size === product.size
+      );
+      if (match) {
+        match.trackNewColors = e.target.checked;
+        await chrome.storage.local.set({ trackedProducts });
       }
     });
 
@@ -489,7 +496,9 @@ function buildUSCollectionUrl(parsed, activeCodes) {
 }
 
 function buildIntlCollectionUrl(parsed, activeNames) {
-  const u = new URL(parsed.fullUrl || parsed.url);
+  const baseUrl = parsed.fullUrl || parsed.url;
+  if (!baseUrl) return '';
+  const u = new URL(baseUrl);
 
   // Rebuild with only active filters
   if (activeNames.length > 0) {
@@ -777,10 +786,16 @@ async function renderCollections() {
       input.focus();
       input.select();
 
+      let saved = false;
       const save = async () => {
+        if (saved) return;
+        saved = true;
         const newName = input.value.trim() || currentName;
-        collections[idx].name = newName;
-        await chrome.storage.local.set({ savedCollections: collections });
+        const fresh = await getCollections();
+        if (idx < fresh.length) {
+          fresh[idx].name = newName;
+          await chrome.storage.local.set({ savedCollections: fresh });
+        }
         await renderCollections();
       };
 
@@ -795,8 +810,11 @@ async function renderCollections() {
     card.querySelector('.btn-delete-col').addEventListener('click', async (e) => {
       e.stopPropagation();
       const idx = parseInt(e.currentTarget.dataset.index);
-      collections.splice(idx, 1);
-      await chrome.storage.local.set({ savedCollections: collections });
+      const fresh = await getCollections();
+      if (idx < fresh.length) {
+        fresh.splice(idx, 1);
+        await chrome.storage.local.set({ savedCollections: fresh });
+      }
       await renderCollections();
     });
 
@@ -851,7 +869,7 @@ function getStatusLabel(status) {
   switch (status) {
     case 'low_stock': return '⚠ Low Stock';
     case 'sold_out': return 'Sold Out';
-    case 'in_stock':
+    case 'in_stock': return 'In Stock';
     case 'discontinued': return '\u274C Discontinued';
     default: return 'In Stock';
   }
@@ -927,9 +945,9 @@ function getPriceHistoryHtml(product) {
 }
 
 function escapeHtml(str) {
-  if (!str) return '';
+  if (str === null || str === undefined) return '';
   const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  div.textContent = String(str);
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 

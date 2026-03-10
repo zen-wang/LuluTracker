@@ -33,47 +33,46 @@ const MAX_CONSECUTIVE_404 = 3;       // Mark product discontinued after this man
  * Intl: ?dwvar_prod11710026_color=069299
  */
 function getColorCodeFromUrl(url) {
-    try {
-          const params = new URLSearchParams(new URL(url).search);
-          // US format
-      const usColor = params.get('color');
-          if (usColor) return usColor;
-          // International (SFCC dwvar_) format
-      for (const [key, val] of params.entries()) {
-              if (key.startsWith('dwvar_') && key.endsWith('_color')) return val;
-      }
-    } catch { /* ignore */ }
-    return null;
+  try {
+    const params = new URLSearchParams(new URL(url).search);
+    // US format
+    const usColor = params.get('color');
+    if (usColor) return usColor;
+    // International (SFCC dwvar_) format
+    for (const [key, val] of params.entries()) {
+      if (key.startsWith('dwvar_') && key.endsWith('_color')) return val;
+    }
+  } catch { /* ignore */ }
+  return null;
 }
 
 // ── Initialization ───────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener(() => {
-    chrome.alarms.create(ALARM_NAME, {
-          delayInMinutes: 1,
-          periodInMinutes: CHECK_INTERVAL_MINUTES,
-    });
-    // Initialize badge
-                                         updateBadge();
-    console.log('[LuluTracker] Extension installed. Alarm set.');
+  chrome.alarms.create(ALARM_NAME, {
+    delayInMinutes: 1,
+    periodInMinutes: CHECK_INTERVAL_MINUTES,
+  });
+  updateBadge();
+  console.log('[LuluTracker] Extension installed. Alarm set.');
 });
 
 chrome.alarms.get(ALARM_NAME, (alarm) => {
-    if (!alarm) {
-          chrome.alarms.create(ALARM_NAME, {
-                  delayInMinutes: 1,
-                  periodInMinutes: CHECK_INTERVAL_MINUTES,
-          });
-    }
+  if (!alarm) {
+    chrome.alarms.create(ALARM_NAME, {
+      delayInMinutes: 1,
+      periodInMinutes: CHECK_INTERVAL_MINUTES,
+    });
+  }
 });
 
 // ── Alarm handler ────────────────────────────────────────
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
-    if (alarm.name === ALARM_NAME) {
-          console.log('[LuluTracker] Alarm fired. Checking all products...');
-          await checkAllProducts();
-    }
+  if (alarm.name === ALARM_NAME) {
+    console.log('[LuluTracker] Alarm fired. Checking all products...');
+    await checkAllProducts();
+  }
 });
 
 // ══════════════════════════════════════════════════════════
@@ -81,29 +80,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // ══════════════════════════════════════════════════════════
 
 async function updateBadge() {
-    const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
+  const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
 
   const stockAlerts = trackedProducts.filter(p =>
-        p.stockStatus === 'low_stock' || p.stockStatus === 'sold_out'
-                                               ).length;
-    const saleAlerts = trackedProducts.filter(p => p.onSale).length;
-    const fetchErrors = trackedProducts.filter(p =>
-          (p.consecutiveFailures || 0) >= MAX_DISPLAY_FAILURES
-                                                 ).length;
-
+    p.stockStatus === 'low_stock' || p.stockStatus === 'sold_out'
+  ).length;
+  const saleAlerts = trackedProducts.filter(p => p.onSale).length;
+  const fetchErrors = trackedProducts.filter(p =>
+    (p.consecutiveFailures || 0) >= MAX_DISPLAY_FAILURES
+  ).length;
   const discontinuedCount = trackedProducts.filter(p => p.discontinued).length;
   const alertCount = stockAlerts + saleAlerts + fetchErrors + discontinuedCount;
 
   if (alertCount > 0) {
-        chrome.action.setBadgeText({ text: alertCount.toString() });
-        // Red for stock issues, orange for fetch errors only, blue for sales only
-      chrome.action.setBadgeBackgroundColor({
-              color: stockAlerts > 0 ? '#d31334'
-                        : fetchErrors > 0 ? '#e65100'
-                        : '#1565c0'
-      });
+    chrome.action.setBadgeText({ text: alertCount.toString() });
+    chrome.action.setBadgeBackgroundColor({
+      color: stockAlerts > 0 ? '#d31334'
+        : fetchErrors > 0 ? '#e65100'
+        : '#1565c0'
+    });
   } else {
-        chrome.action.setBadgeText({ text: '' });
+    chrome.action.setBadgeText({ text: '' });
   }
 }
 
@@ -116,42 +113,39 @@ async function updateBadge() {
 // ══════════════════════════════════════════════════════════
 
 async function fetchWithRetry(url) {
-    const headers = {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-    };
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+    'Accept': 'text/html,application/xhtml+xml',
+  };
 
   for (let attempt = 1; attempt <= 2; attempt++) {
-        try {
-                const response = await fetch(url, { headers });
-                if (response.ok) {
-                          const html = await response.text();
-                          return { html, ok: true, error: null };
-                }
-                // Non-200: might be 403 rate-limit or 404 removed product
-          const status = response.status;
-                console.warn(`[LuluTracker] HTTP ${status} for ${url} (attempt ${attempt}/2)`);
-                if (status === 404) {
-                          // Don't retry 404s — the product page doesn't exist
-                  return { html: null, ok: false, error: `HTTP 404 — product page not found` };
-                }
-                if (attempt === 1) {
-                          console.log(`[LuluTracker] Retrying in ${RETRY_DELAY_MS}ms...`);
-                          await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                } else {
-                          return { html: null, ok: false, error: `HTTP ${status} after retry` };
-                }
-        } catch (err) {
-                console.warn(`[LuluTracker] Fetch error for ${url} (attempt ${attempt}/2):`, err.message);
-                if (attempt === 1) {
-                          console.log(`[LuluTracker] Retrying in ${RETRY_DELAY_MS}ms...`);
-                          await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-                } else {
-                          return { html: null, ok: false, error: `Network error: ${err.message}` };
-                }
-        }
+    try {
+      const response = await fetch(url, { headers });
+      if (response.ok) {
+        const html = await response.text();
+        return { html, ok: true, error: null };
+      }
+      const status = response.status;
+      console.warn(`[LuluTracker] HTTP ${status} for ${url} (attempt ${attempt}/2)`);
+      if (status === 404) {
+        return { html: null, ok: false, error: `HTTP 404 — product page not found` };
+      }
+      if (attempt === 1) {
+        console.log(`[LuluTracker] Retrying in ${RETRY_DELAY_MS}ms...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        return { html: null, ok: false, error: `HTTP ${status} after retry` };
+      }
+    } catch (err) {
+      console.warn(`[LuluTracker] Fetch error for ${url} (attempt ${attempt}/2):`, err.message);
+      if (attempt === 1) {
+        console.log(`[LuluTracker] Retrying in ${RETRY_DELAY_MS}ms...`);
+        await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+      } else {
+        return { html: null, ok: false, error: `Network error: ${err.message}` };
+      }
+    }
   }
-    // Should not reach here, but just in case
   return { html: null, ok: false, error: 'Unknown fetch failure' };
 }
 
@@ -187,146 +181,161 @@ function appendPriceHistory(product, newPrice, wasOnSale) {
 // ── Core: Check all tracked products ─────────────────────
 
 async function checkAllProducts() {
-    const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
-    if (trackedProducts.length === 0) return;
+  const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
+  if (trackedProducts.length === 0) return;
+
+  // Load cooldowns once — passed through to all shouldNotify/recordNotification calls
+  const { notificationCooldowns = {} } = await chrome.storage.local.get('notificationCooldowns');
 
   const updatedProducts = [];
   const notifItems = [];
 
-  // ── Deduplication ──
-  const fetchCache = {};
-    const newColorNotifiedProductIds = new Set();
+  // Cache raw HTML by base URL to avoid re-fetching the same page,
+  // but re-parse per product since parsed results are variant-specific.
+  const htmlCache = {};
+  const newColorNotifiedProductIds = new Set();
 
   for (const product of trackedProducts) {
-        try {
+    try {
+      // Skip discontinued products
+      if (product.discontinued) {
+        updatedProducts.push(product);
+        continue;
+      }
 
-        // Skip discontinued products
-        if (product.discontinued) {
-          updatedProducts.push(product);
-          continue;
+      const baseUrl = product.url.split('?')[0];
+      let newData;
+      let fetchError = null;
+
+      if (htmlCache[baseUrl]) {
+        newData = parseProductHtml(htmlCache[baseUrl], product);
+      } else {
+        const { html, ok, error } = await fetchWithRetry(product.url);
+        if (ok) {
+          htmlCache[baseUrl] = html;
+          newData = parseProductHtml(html, product);
+        } else {
+          fetchError = error;
+          newData = null;
         }
-                const baseUrl = product.url.split('?')[0];
-                let newData;
+      }
 
-          if (fetchCache[baseUrl]) {
-                    newData = fetchCache[baseUrl];
-          } else {
-                    newData = await fetchProductStatus(product);
-                    if (newData) fetchCache[baseUrl] = newData;
-          }
+      // ── Fetch failed — track failures, check for discontinuation ──
+      if (!newData) {
+        const failures = (product.consecutiveFailures || 0) + 1;
+        console.warn(`[LuluTracker] Failed to fetch ${product.name}: ${fetchError} (failures: ${failures})`);
 
-          if (!newData) {
-                    // fetchProductStatus returned null — fetch failed or parse failed
-                  // The product's consecutiveFailures was already incremented inside fetchProductStatus
-          // Check if this is a persistent 404
-          if (product.lastFetchError && product.lastFetchError.includes("404")) {
-            product.consecutive404s = (product.consecutive404s || 0) + 1;
-            if (product.consecutive404s >= MAX_CONSECUTIVE_404 && !product.discontinued) {
-              product.discontinued = true;
-              product.discontinuedAt = Date.now();
-              console.log(`[LuluTracker] Product marked discontinued after ${product.consecutive404s} consecutive 404s`);
-              if (await shouldNotify(product, "discontinued")) {
-                notifItems.push({
-                  product,
-                  change: { type: "discontinued" },
-                  url: product.url,
-                });
-              }
+        let consecutive404s = product.consecutive404s || 0;
+        let discontinued = product.discontinued || false;
+        let discontinuedAt = product.discontinuedAt || null;
+
+        if (fetchError && fetchError.includes('404')) {
+          consecutive404s += 1;
+          if (consecutive404s >= MAX_CONSECUTIVE_404 && !discontinued) {
+            discontinued = true;
+            discontinuedAt = Date.now();
+            console.log(`[LuluTracker] Product marked discontinued after ${consecutive404s} consecutive 404s`);
+            if (shouldNotify(product, 'discontinued', notificationCooldowns)) {
+              notifItems.push({
+                product: { ...product, consecutive404s, discontinued, discontinuedAt },
+                change: { type: 'discontinued' },
+                url: product.url,
+              });
             }
-          } else {
-            product.consecutive404s = 0;
           }
-          updatedProducts.push(product);
-          continue;
-          }
+        } else {
+          consecutive404s = 0;
+        }
 
-          // ── Fetch succeeded — reset failure tracking ──
-          product.consecutiveFailures = 0;
-                product.lastFetchError = null;
-          product.consecutive404s = 0;
+        updatedProducts.push({
+          ...product,
+          consecutiveFailures: failures,
+          lastFetchError: fetchError,
+          consecutive404s,
+          discontinued,
+          discontinuedAt,
+        });
+        continue;
+      }
 
+      // ── Fetch succeeded ──
+      // Track price history (mutates product.priceHistory in place)
+      appendPriceHistory(product, newData.currentPrice, newData.onSale);
 
-      // ── Track price history ──
-      const effectivePrice = newData.currentPrice;
-      appendPriceHistory(product, effectivePrice, newData.onSale);
+      let changes = detectChanges(product, newData);
 
-          let changes = detectChanges(product, newData);
+      // Deduplicate new_color notifications across variants of the same product
+      if (product.productId && newColorNotifiedProductIds.has(product.productId)) {
+        changes = changes.filter(c => c.type !== 'new_color');
+      }
+      if (changes.some(c => c.type === 'new_color') && product.productId) {
+        newColorNotifiedProductIds.add(product.productId);
+      }
 
-          // ── Deduplicate new_color notifications ──
-          if (product.productId && newColorNotifiedProductIds.has(product.productId)) {
-                    changes = changes.filter(c => c.type !== 'new_color');
-          }
-                if (changes.some(c => c.type === 'new_color') && product.productId) {
-                          newColorNotifiedProductIds.add(product.productId);
-                }
-
-          // ── Check for normal → discount transition ──
-          let markdownTransition = null;
-                const hasSoldOutChange = changes.some(c => c.type === 'status_change' && c.to === 'sold_out');
-                if (!product.url.includes('-MD/') && !product.url.includes('.html') &&
-                              (hasSoldOutChange || product.trackNewColors)) {
-                          markdownTransition = await checkMarkdownTransition(product, newData);
-                          if (markdownTransition) {
-          // Track markdown sale price in history
+      // ── Check for normal → discount transition (US only) ──
+      let markdownTransition = null;
+      const hasSoldOutChange = changes.some(c => c.type === 'status_change' && c.to === 'sold_out');
+      if (!product.url.includes('-MD/') && !product.url.includes('.html') && hasSoldOutChange) {
+        markdownTransition = await checkMarkdownTransition(product, newData);
+        if (markdownTransition) {
           if (markdownTransition.change && typeof markdownTransition.change.salePrice === 'number') {
             appendPriceHistory(product, markdownTransition.change.salePrice, true);
           }
-                                      changes = changes.filter(c => !(c.type === 'status_change' && c.to === 'sold_out'));
-          if (await shouldNotify(product, markdownTransition.change.type)) {
+          changes = changes.filter(c => !(c.type === 'status_change' && c.to === 'sold_out'));
+          if (shouldNotify(product, markdownTransition.change.type, notificationCooldowns)) {
             notifItems.push({
               product, change: markdownTransition.change, url: markdownTransition.discountUrl,
             });
           }
-                          }
-                }
-
-        // Collect remaining notifications (with cooldown check)
-        for (const change of changes) {
-          if (await shouldNotify(product, change.type)) {
-            notifItems.push({ product, change, url: product.url });
-          }
         }
+      }
 
-          updatedProducts.push({
-                    ...product,
-                    currentPrice: newData.currentPrice !== null ? newData.currentPrice : product.currentPrice,
-                    originalPrice: newData.originalPrice !== null ? newData.originalPrice : product.originalPrice,
-                    onSale: newData.onSale,
-                    stockStatus: markdownTransition ? 'in_stock' : newData.stockStatus,
-                    availableColors: newData.availableColors.length > 0
-                      ? newData.availableColors : product.availableColors,
-                    lastChecked: Date.now(),
-                    lastChange: (changes.length > 0 || markdownTransition)
-                      ? {
-                                      type: markdownTransition ? 'moved_to_markdown' : changes[0]?.type,
-                                      timestamp: Date.now(),
-                      }
-                                : product.lastChange,
-                    markdownUrl: markdownTransition
-                      ? markdownTransition.discountUrl : product.markdownUrl,
+      // Collect remaining notifications (with cooldown check)
+      for (const change of changes) {
+        if (shouldNotify(product, change.type, notificationCooldowns)) {
+          notifItems.push({ product, change, url: product.url });
+        }
+      }
+
+      updatedProducts.push({
+        ...product,
+        currentPrice: newData.currentPrice !== null ? newData.currentPrice : product.currentPrice,
+        originalPrice: newData.onSale ? (newData.originalPrice || product.originalPrice) : null,
+        onSale: newData.onSale,
+        stockStatus: markdownTransition ? 'in_stock' : newData.stockStatus,
+        availableColors: newData.availableColors.length > 0
+          ? newData.availableColors : product.availableColors,
+        lastChecked: Date.now(),
+        lastChange: (changes.length > 0 || markdownTransition)
+          ? {
+              type: markdownTransition ? 'moved_to_markdown' : changes[0]?.type,
+              timestamp: Date.now(),
+            }
+          : product.lastChange,
+        markdownUrl: markdownTransition
+          ? markdownTransition.discountUrl : product.markdownUrl,
         priceHistory: product.priceHistory || [],
-                    // Ensure these fields persist
-                    consecutiveFailures: 0,
-                    lastFetchError: null,
-          consecutive404s: 0,
-          discontinued: product.discontinued || false,
-          discontinuedAt: product.discontinuedAt || null,
-          });
-        } catch (err) {
-                console.error(`[LuluTracker] Error checking ${product.name}:`, err);
-        updatedProducts.push({
-          ...product,
-          consecutiveFailures: (product.consecutiveFailures || 0) + 1,
-          lastFetchError: err.message || 'Unexpected error during check',
-          consecutive404s: product.consecutive404s || 0,
-          discontinued: product.discontinued || false,
-          discontinuedAt: product.discontinuedAt || null,
-        });
-        }
+        consecutiveFailures: 0,
+        lastFetchError: null,
+        consecutive404s: 0,
+        discontinued: false,
+        discontinuedAt: product.discontinuedAt || null,
+      });
+    } catch (err) {
+      console.error(`[LuluTracker] Error checking ${product.name}:`, err);
+      updatedProducts.push({
+        ...product,
+        consecutiveFailures: (product.consecutiveFailures || 0) + 1,
+        lastFetchError: err.message || 'Unexpected error during check',
+        consecutive404s: product.consecutive404s || 0,
+        discontinued: product.discontinued || false,
+        discontinuedAt: product.discontinuedAt || null,
+      });
+    }
   }
 
   // ── Dispatch grouped notifications ──
-  const sentNotifications = await groupAndSendNotifications(notifItems);
+  const sentNotifications = await groupAndSendNotifications(notifItems, notificationCooldowns);
 
   // Write notification URL mappings for click handling
   if (sentNotifications.length > 0) {
@@ -334,26 +343,44 @@ async function checkAllProducts() {
     for (const notif of sentNotifications) {
       notificationMap[notif.id] = notif.url;
     }
+    // Prune entries older than 24h to prevent unbounded growth
+    const mapCutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const id of Object.keys(notificationMap)) {
+      const ts = parseInt(id.match(/lulu-(?:batch-)?(\d+)-/)?.[1] || '0');
+      if (ts > 0 && ts < mapCutoff) delete notificationMap[id];
+    }
     await chrome.storage.local.set({ notificationMap });
   }
 
-  await chrome.storage.local.set({ trackedProducts: updatedProducts });
-    await updateBadge();
+  // Persist cooldowns (prune entries older than 24h)
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const [k, ts] of Object.entries(notificationCooldowns)) {
+    if (ts < cutoff) delete notificationCooldowns[k];
+  }
+  await chrome.storage.local.set({ notificationCooldowns });
+
+  // Merge updates back — re-read storage to preserve any adds/removes during the check
+  const { trackedProducts: currentProducts = [] } = await chrome.storage.local.get('trackedProducts');
+  const mergeKey = (p) => `${p.productId || p.url.split('?')[0]}:${p.color}:${p.size}`;
+  const updatedByKey = new Map(
+    updatedProducts.map(p => [mergeKey(p), p])
+  );
+  const mergedProducts = currentProducts.map(p => {
+    return updatedByKey.get(mergeKey(p)) || p;
+  });
+
+  await chrome.storage.local.set({ trackedProducts: mergedProducts });
+  await updateBadge();
 }
 
 // ── Fetch & parse a product page ─────────────────────────
 
 async function fetchProductStatus(product) {
-    const { html, ok, error } = await fetchWithRetry(product.url);
-
+  const { html, ok, error } = await fetchWithRetry(product.url);
   if (!ok) {
-        // Track the failure on the product object (mutates in place)
-      product.consecutiveFailures = (product.consecutiveFailures || 0) + 1;
-        product.lastFetchError = error;
-        console.warn(`[LuluTracker] Failed to fetch ${product.name}: ${error} (failures: ${product.consecutiveFailures})`);
-        return null;
+    console.warn(`[LuluTracker] Failed to fetch ${product.name}: ${error}`);
+    return null;
   }
-
   return parseProductHtml(html, product);
 }
 
@@ -362,194 +389,189 @@ async function fetchProductStatus(product) {
  * Falls back to regex patterns.
  */
 function parseProductHtml(html, product) {
-    const result = {
-          currentPrice: null,
-          originalPrice: null,
-          onSale: false,
-          stockStatus: 'in_stock',
-          availableColors: [],
-    };
+  const result = {
+    currentPrice: null,
+    originalPrice: null,
+    onSale: false,
+    stockStatus: 'in_stock',
+    availableColors: [],
+  };
 
   const isIntl = product.url.includes('.html') ||
-        product.url.includes('lululemon.com.hk') ||
-        product.url.includes('lululemon.com.au');
+    product.url.includes('lululemon.com.hk') ||
+    product.url.includes('lululemon.com.au');
 
   // ── Strategy 1: Parse __NEXT_DATA__ (US site) ──
   const nextDataMatch = html.match(
-        /<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/
-      );
-    if (nextDataMatch) {
-          try {
-                  const nextData = JSON.parse(nextDataMatch[1]);
-                  const queries = nextData?.props?.pageProps?.dehydratedState?.queries || [];
-                  let queryData = null;
-                  for (const q of queries) {
-                            const data = q?.state?.data;
-                            if (data?.productSummary && data?.skus) {
-                                        queryData = data;
-                                        break;
-                            }
-                  }
-                  if (queryData) {
-                            if (queryData.productSummary?.isSoldOut) {
-                                        result.stockStatus = 'sold_out';
-                            }
-                            if (queryData.colors) {
-                                        result.availableColors = queryData.colors.map(c => ({
-                                                      code: c.code,
-                                                      name: c.name,
-                                        }));
-                            }
-                            const colorCode = getColorCodeFromUrl(product.url);
-                            console.log(`[LuluTracker] Parsing ${product.name}: colorCode=${colorCode}, size=${product.size}`);
+    /<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/
+  );
+  if (nextDataMatch) {
+    try {
+      const nextData = JSON.parse(nextDataMatch[1]);
+      const queries = nextData?.props?.pageProps?.dehydratedState?.queries || [];
+      let queryData = null;
+      for (const q of queries) {
+        const data = q?.state?.data;
+        if (data?.productSummary && data?.skus) {
+          queryData = data;
+          break;
+        }
+      }
+      if (queryData) {
+        if (queryData.productSummary?.isSoldOut) {
+          result.stockStatus = 'sold_out';
+        }
+        if (queryData.colors) {
+          result.availableColors = queryData.colors.map(c => ({
+            code: c.code,
+            name: c.name,
+          }));
+        }
+        const colorCode = getColorCodeFromUrl(product.url);
+        console.log(`[LuluTracker] Parsing ${product.name}: colorCode=${colorCode}, size=${product.size}`);
 
-                    if (colorCode && queryData.skus) {
-                                const matchingSku = queryData.skus.find(s => {
-                                              const cMatch = s.color?.code === colorCode;
-                                              const sMatch = !product.size || product.size === 'Not selected' ||
-                                                              s.size === product.size;
-                                              return cMatch && sMatch;
-                                });
+        if (colorCode && queryData.skus) {
+          const matchingSku = queryData.skus.find(s => {
+            const cMatch = s.color?.code === colorCode;
+            const sMatch = !product.size || product.size === 'Not selected' ||
+              s.size === product.size;
+            return cMatch && sMatch;
+          });
 
-                              if (matchingSku) {
-                                            console.log(`[LuluTracker] Found SKU: available=${matchingSku.available}, onSale=${matchingSku.price?.onSale}`);
-                                            if (matchingSku.price) {
-                                                            const listPrice = parseFloat(matchingSku.price.listPrice) || null;
-                                                            const salePrice = matchingSku.price.salePrice
-                                                              ? parseFloat(matchingSku.price.salePrice) : null;
-                                                            result.currentPrice = listPrice;
-                                                            if (salePrice && listPrice && salePrice < listPrice) {
-                                                                              result.originalPrice = listPrice;
-                                                                              result.currentPrice = salePrice;
-                                                                              result.onSale = true;
-                                                            }
-                                            }
-                                            if (!matchingSku.available) {
-                                                            result.stockStatus = 'sold_out';
-                                            }
-                              } else {
-                                            console.log(`[LuluTracker] No matching SKU found for color=${colorCode} size=${product.size}`);
-                                            if (product.size && product.size !== 'Not selected') {
-                                                            const colorDriver = queryData.colorDriver?.find(cd => cd.color === colorCode);
-                                                            if (colorDriver && !colorDriver.sizes.includes(product.size)) {
-                                                                              result.stockStatus = 'sold_out';
-                                                            }
-                                            }
-                              }
-                    }
-                            if (!result.currentPrice && queryData.skus.length > 0) {
-                                        result.currentPrice = parseFloat(queryData.skus[0].price?.listPrice) || null;
-                            }
-                  }
-          } catch (e) {
-                  console.warn('[LuluTracker] Failed to parse __NEXT_DATA__:', e);
+          if (matchingSku) {
+            console.log(`[LuluTracker] Found SKU: available=${matchingSku.available}, onSale=${matchingSku.price?.onSale}`);
+            if (matchingSku.price) {
+              const listPrice = parseFloat(matchingSku.price.listPrice) || null;
+              const salePrice = matchingSku.price.salePrice
+                ? parseFloat(matchingSku.price.salePrice) : null;
+              result.currentPrice = listPrice;
+              if (salePrice && listPrice && salePrice < listPrice) {
+                result.originalPrice = listPrice;
+                result.currentPrice = salePrice;
+                result.onSale = true;
+              }
+            }
+            if (!matchingSku.available) {
+              result.stockStatus = 'sold_out';
+            }
+          } else {
+            console.log(`[LuluTracker] No matching SKU found for color=${colorCode} size=${product.size}`);
+            if (product.size && product.size !== 'Not selected') {
+              const colorDriver = queryData.colorDriver?.find(cd => cd.color === colorCode);
+              if (colorDriver && !colorDriver.sizes.includes(product.size)) {
+                result.stockStatus = 'sold_out';
+              }
+            }
           }
+        }
+        if (!result.currentPrice && queryData.skus.length > 0) {
+          result.currentPrice = parseFloat(queryData.skus[0].price?.listPrice) || null;
+        }
+      }
+    } catch (e) {
+      console.warn('[LuluTracker] Failed to parse __NEXT_DATA__:', e);
     }
+  }
 
   // ── Strategy 2: Parse JSON-LD ProductGroup (SFCC intl sites) ──
   if (isIntl || !nextDataMatch) {
-        const ldMatches = html.matchAll(
-                /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g
-              );
-        for (const ldMatch of ldMatches) {
-                try {
-                          const ld = JSON.parse(ldMatch[1]);
-                          if (ld['@type'] !== 'ProductGroup') continue;
-                          console.log(`[LuluTracker] Found JSON-LD ProductGroup: ${ld.name}, ${(ld.hasVariant || []).length} variants`);
+    const ldMatches = html.matchAll(
+      /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g
+    );
+    for (const ldMatch of ldMatches) {
+      try {
+        const ld = JSON.parse(ldMatch[1]);
+        if (ld['@type'] !== 'ProductGroup') continue;
+        console.log(`[LuluTracker] Found JSON-LD ProductGroup: ${ld.name}, ${(ld.hasVariant || []).length} variants`);
 
-                  const variants = ld.hasVariant || [];
-                          const colorCode = getColorCodeFromUrl(product.url);
+        const variants = ld.hasVariant || [];
 
-                  const colorMap = new Map();
-                          for (const v of variants) {
-                                      if (v.color && !colorMap.has(v.color)) {
-                                                    colorMap.set(v.color, { code: v.color, name: v.color });
-                                      }
-                          }
-                          result.availableColors = [...colorMap.values()];
-
-                  const colorName = product.color;
-                          const colorVariants = colorName
-                            ? variants.filter(v => v.color === colorName) : [];
-                          console.log(`[LuluTracker] SFCC matching color="${colorName}": ${colorVariants.length} variants`);
-
-                  if (colorVariants.length > 0) {
-                              const price = parseFloat(colorVariants[0].offers?.price);
-                              if (price > 0) result.currentPrice = price;
-
-                            if (product.size && product.size !== 'Not selected') {
-                                          const sizeMatch = colorVariants.find(v => v.size === product.size);
-                                          if (sizeMatch) {
-                                                          const avail = sizeMatch.offers?.availability || '';
-                                                          if (avail.includes('OutOfStock')) {
-                                                                            result.stockStatus = 'sold_out';
-                                                          }
-                                          }
-                            }
-
-                            const allOut = colorVariants.every(v =>
-                                          (v.offers?.availability || '').includes('OutOfStock')
-                                                                         );
-                              if (allOut) result.stockStatus = 'sold_out';
-                  }
-
-        // ── SFCC discount detection (HK/AU) ──
-        // Compare tracked color price against max price across ALL variants
-        // If our price is lower than the max, the product is on sale
-        const allPrices = variants
-          .map(v => parseFloat(v.offers?.price))
-          .filter(p => p > 0);
-        if (allPrices.length > 0 && result.currentPrice) {
-          const maxPrice = Math.max(...allPrices);
-          if (result.currentPrice < maxPrice) {
-            result.onSale = true;
-            result.originalPrice = maxPrice;
-            console.log(`[LuluTracker] SFCC discount detected: $${result.currentPrice} (was $${maxPrice})`);
+        const colorMap = new Map();
+        for (const v of variants) {
+          if (v.color && !colorMap.has(v.color)) {
+            colorMap.set(v.color, { code: v.color, name: v.color });
           }
         }
-                          break;
-                } catch (e) {
-                          console.warn('[LuluTracker] Failed to parse JSON-LD:', e);
-                }
+        result.availableColors = [...colorMap.values()];
+
+        const colorName = product.color;
+        const colorVariants = colorName
+          ? variants.filter(v => v.color === colorName) : [];
+        console.log(`[LuluTracker] SFCC matching color="${colorName}": ${colorVariants.length} variants`);
+
+        if (colorVariants.length > 0) {
+          const price = parseFloat(colorVariants[0].offers?.price);
+          if (price > 0) result.currentPrice = price;
+
+          if (product.size && product.size !== 'Not selected') {
+            const sizeMatch = colorVariants.find(v => v.size === product.size);
+            if (sizeMatch) {
+              const avail = sizeMatch.offers?.availability || '';
+              if (avail.includes('OutOfStock')) {
+                result.stockStatus = 'sold_out';
+              }
+            }
+          }
+
+          const allOut = colorVariants.every(v =>
+            (v.offers?.availability || '').includes('OutOfStock')
+          );
+          if (allOut) result.stockStatus = 'sold_out';
         }
+
+        // SFCC discount detection (HK/AU) — compare against other colors' prices
+        const otherColorPrices = variants
+          .filter(v => v.color !== colorName)
+          .map(v => parseFloat(v.offers?.price))
+          .filter(p => p > 0);
+        if (otherColorPrices.length > 0 && result.currentPrice) {
+          const maxOtherPrice = Math.max(...otherColorPrices);
+          if (result.currentPrice < maxOtherPrice) {
+            result.onSale = true;
+            result.originalPrice = maxOtherPrice;
+            console.log(`[LuluTracker] SFCC discount detected: $${result.currentPrice} (was $${maxOtherPrice})`);
+          }
+        }
+        break;
+      } catch (e) {
+        console.warn('[LuluTracker] Failed to parse JSON-LD:', e);
+      }
+    }
   }
 
   // ── Fallback: regex-based stock detection ──
   if (!isIntl) {
-        const htmlLower = html.toLowerCase();
-        if (html.includes('pdp-inventory-low-stock-warning') ||
-                    htmlLower.includes('hurry, only a few left') ||
-                    htmlLower.includes('only a few left') ||
-                    htmlLower.includes('almost gone')) {
-                if (result.stockStatus !== 'sold_out') {
-                          result.stockStatus = 'low_stock';
-                          console.log('[LuluTracker] Detected low stock warning (server-rendered)');
-                }
-        }
-        if (result.stockStatus !== 'sold_out' && result.stockStatus !== 'low_stock') {
-                if (htmlLower.includes('>sold out<') || htmlLower.includes('>out of stock<')) {
-                          result.stockStatus = 'sold_out';
-                }
-        }
+    const htmlLower = html.toLowerCase();
+    if (html.includes('pdp-inventory-low-stock-warning') ||
+        htmlLower.includes('hurry, only a few left') ||
+        htmlLower.includes('only a few left') ||
+        htmlLower.includes('almost gone')) {
+      if (result.stockStatus !== 'sold_out') {
+        result.stockStatus = 'low_stock';
+        console.log('[LuluTracker] Detected low stock warning (server-rendered)');
+      }
+    }
+    if (result.stockStatus !== 'sold_out' && result.stockStatus !== 'low_stock') {
+      if (htmlLower.includes('>sold out<') || htmlLower.includes('>out of stock<')) {
+        result.stockStatus = 'sold_out';
+      }
+    }
   } else {
-        if (result.stockStatus === 'in_stock') {
-                const visibleLowStock = html.match(
-                          /class="stock-avail-msg[^"]*"[^>]*style="[^"]*display:\s*block[^"]*"/
-                        );
-                if (visibleLowStock) {
-                          result.stockStatus = 'low_stock';
-                          console.log('[LuluTracker] Detected visible low stock warning (SFCC)');
-                }
-        }
+    if (result.stockStatus === 'in_stock') {
+      const visibleLowStock = html.match(
+        /class="stock-avail-msg[^"]*"[^>]*style="[^"]*display:\s*block[^"]*"/
+      );
+      if (visibleLowStock) {
+        result.stockStatus = 'low_stock';
+        console.log('[LuluTracker] Detected visible low stock warning (SFCC)');
+      }
+    }
 
     // SFCC markdown-prices detection (HK/AU)
-    // The "markdown-prices" class is server-rendered when a product is discounted
     if (isIntl && !result.onSale) {
       if (html.includes('markdown-prices')) {
         result.onSale = true;
         console.log('[LuluTracker] SFCC markdown-prices class detected in HTML');
-
-        // Try to extract the markdown price from the HTML
         const mdPriceMatch = html.match(/class="markdown-prices"[^>]*>[\s\S]*?(?:HK|A|NZ)?\$(\d+(?:[,.]?\d+)*)/);
         if (mdPriceMatch && !result.currentPrice) {
           result.currentPrice = parseFloat(mdPriceMatch[1]);
@@ -559,12 +581,12 @@ function parseProductHtml(html, product) {
   }
 
   if (!result.currentPrice) {
-        const priceMatch = html.match(
-                /data-lll-pl="price"[^>]*>.*?(?:HK|A|NZ|CA|NT)?\$(\d+(?:[,.]?\d+)*)/s
-              ) || html.match(
-                /class="[^"]*price[^"]*"[^>]*>.*?(?:HK|A|NZ|CA|NT)?\$(\d+(?:[,.]?\d+)*)/s
-              );
-        if (priceMatch) result.currentPrice = parseFloat(priceMatch[1]);
+    const priceMatch = html.match(
+      /data-lll-pl="price"[^>]*>.*?(?:HK|A|NZ|CA|NT)?\$(\d+(?:[,.]?\d+)*)/s
+    ) || html.match(
+      /class="[^"]*price[^"]*"[^>]*>.*?(?:HK|A|NZ|CA|NT)?\$(\d+(?:[,.]?\d+)*)/s
+    );
+    if (priceMatch) result.currentPrice = parseFloat(priceMatch[1]);
   }
 
   return result;
@@ -573,103 +595,108 @@ function parseProductHtml(html, product) {
 // ── Detect changes ───────────────────────────────────────
 
 async function checkMarkdownTransition(product, newData) {
-    const trackedColorCode = getColorCodeFromUrl(product.url);
-    if (!trackedColorCode) return null;
+  const trackedColorCode = getColorCodeFromUrl(product.url);
+  if (!trackedColorCode) return null;
 
   const colorStillExists = newData.availableColors.some(c => c.code === trackedColorCode);
-    if (colorStillExists) return null;
+  if (colorStillExists) return null;
 
   console.log(`[LuluTracker] Color ${trackedColorCode} disappeared from normal page. Checking markdown...`);
 
   const mdUrl = product.url.replace(/(\/_\/)/, '-MD$1');
 
   try {
-        const { html, ok } = await fetchWithRetry(mdUrl);
-        if (!ok) {
-                console.log(`[LuluTracker] Markdown page fetch failed`);
-                return null;
-        }
+    const { html, ok } = await fetchWithRetry(mdUrl);
+    if (!ok) {
+      console.log(`[LuluTracker] Markdown page fetch failed`);
+      return null;
+    }
 
-      const ndMatch = html.match(/<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-        if (!ndMatch) return null;
+    const ndMatch = html.match(/<script\s+id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+    if (!ndMatch) return null;
 
-      const nextData = JSON.parse(ndMatch[1]);
-        const queries = nextData?.props?.pageProps?.dehydratedState?.queries || [];
-        let mdQueryData = null;
-        for (const q of queries) {
-                const d = q?.state?.data;
-                if (d?.productSummary && d?.skus) {
-                          mdQueryData = d;
-                          break;
-                }
-        }
-        if (!mdQueryData) return null;
+    const nextData = JSON.parse(ndMatch[1]);
+    const queries = nextData?.props?.pageProps?.dehydratedState?.queries || [];
+    let mdQueryData = null;
+    for (const q of queries) {
+      const d = q?.state?.data;
+      if (d?.productSummary && d?.skus) {
+        mdQueryData = d;
+        break;
+      }
+    }
+    if (!mdQueryData) return null;
 
-      const mdColor = mdQueryData.colors?.find(c => c.code === trackedColorCode);
-        if (!mdColor) return null;
+    const mdColor = mdQueryData.colors?.find(c => c.code === trackedColorCode);
+    if (!mdColor) return null;
 
-      const mdSku = mdQueryData.skus.find(s =>
-              s.color?.code === trackedColorCode &&
-              (!product.size || product.size === 'Not selected' || s.size === product.size)
-                                              );
+    const mdSku = mdQueryData.skus.find(s =>
+      s.color?.code === trackedColorCode &&
+      (!product.size || product.size === 'Not selected' || s.size === product.size)
+    );
 
-      const salePrice = mdSku?.price?.salePrice
-          ? parseFloat(mdSku.price.salePrice) : null;
-        const listPrice = mdSku?.price?.listPrice
-          ? parseFloat(mdSku.price.listPrice) : product.currentPrice;
+    const salePrice = mdSku?.price?.salePrice
+      ? parseFloat(mdSku.price.salePrice) : null;
+    const listPrice = mdSku?.price?.listPrice
+      ? parseFloat(mdSku.price.listPrice) : product.currentPrice;
 
-      const mdProductId = mdQueryData.productSummary?.productId || '';
-        const mdSlug = mdQueryData.productSummary?.unifiedId || '';
-        const parentCat = mdQueryData.productSummary?.parentCategoryUnifiedId || '';
-        const discountUrl = `https://shop.lululemon.com/p/${parentCat}/${mdSlug}/_/${mdProductId}?color=${trackedColorCode}${product.size && product.size !== 'Not selected' ? '&sz=' + product.size : ''}`;
+    if (salePrice === null && listPrice === null) {
+      console.log('[LuluTracker] Found color on markdown page but no price data');
+      return null;
+    }
 
-      console.log(`[LuluTracker] Found color on markdown page! Sale price: $${salePrice} (was $${listPrice})`);
+    const mdProductId = mdQueryData.productSummary?.productId || '';
+    const mdSlug = mdQueryData.productSummary?.unifiedId || '';
+    const parentCat = mdQueryData.productSummary?.parentCategoryUnifiedId || '';
+    const discountUrl = `https://shop.lululemon.com/p/${parentCat}/${mdSlug}/_/${mdProductId}?color=${trackedColorCode}${product.size && product.size !== 'Not selected' ? '&sz=' + product.size : ''}`;
 
-      return {
-              discountUrl,
-              change: {
-                        type: 'moved_to_markdown',
-                        salePrice: salePrice || '?',
-                        listPrice: listPrice || '?',
-              },
-      };
+    console.log(`[LuluTracker] Found color on markdown page! Sale price: $${salePrice} (was $${listPrice})`);
+
+    return {
+      discountUrl,
+      change: {
+        type: 'moved_to_markdown',
+        salePrice: salePrice ?? listPrice,
+        listPrice: listPrice ?? salePrice,
+      },
+    };
   } catch (err) {
-        console.warn(`[LuluTracker] Error checking markdown page:`, err);
-        return null;
+    console.warn(`[LuluTracker] Error checking markdown page:`, err);
+    return null;
   }
 }
 
 function detectChanges(oldProduct, newData) {
-    const changes = [];
+  const changes = [];
 
   if (oldProduct.stockStatus !== newData.stockStatus) {
-        changes.push({
-                type: 'status_change',
-                from: oldProduct.stockStatus,
-                to: newData.stockStatus,
-        });
+    changes.push({
+      type: 'status_change',
+      from: oldProduct.stockStatus,
+      to: newData.stockStatus,
+    });
   }
 
   if (oldProduct.currentPrice && newData.currentPrice &&
-            oldProduct.currentPrice !== newData.currentPrice) {
-        changes.push({
-                type: 'price_change',
-                from: oldProduct.currentPrice,
-                to: newData.currentPrice,
-        });
+      oldProduct.currentPrice !== newData.currentPrice) {
+    changes.push({
+      type: 'price_change',
+      from: oldProduct.currentPrice,
+      to: newData.currentPrice,
+    });
   }
 
   if (!oldProduct.onSale && newData.onSale) {
-        changes.push({ type: 'went_on_sale' });
+    changes.push({ type: 'went_on_sale' });
   }
 
   if (oldProduct.trackNewColors && oldProduct.availableColors && newData.availableColors) {
-        const oldCodes = new Set(oldProduct.availableColors.map(c => c.code));
-        for (const newColor of newData.availableColors) {
-                if (!oldCodes.has(newColor.code)) {
-                          changes.push({ type: 'new_color', color: newColor.name });
-                }
-        }
+    const oldCodes = new Set(oldProduct.availableColors.map(c => c.code));
+    for (const newColor of newData.availableColors) {
+      if (!oldCodes.has(newColor.code)) {
+        changes.push({ type: 'new_color', color: newColor.name });
+      }
+    }
   }
 
   return changes;
@@ -686,31 +713,28 @@ function detectChanges(oldProduct, newData) {
 // ══════════════════════════════════════════════════════════
 
 /**
- * Check whether a notification should fire for this product + change type.
- * Uses notificationCooldowns in storage: { "productId:color:changeType": timestamp }
+ * Build a stable cooldown key. Falls back to base URL if productId is null.
  */
-async function shouldNotify(product, changeType) {
-  const { notificationCooldowns = {} } = await chrome.storage.local.get('notificationCooldowns');
-  const key = `${product.productId}:${product.color}:${changeType}`;
-  const lastNotified = notificationCooldowns[key] || 0;
+function getCooldownKey(product, changeType) {
+  const id = product.productId || product.url.split('?')[0];
+  return `${id}:${product.color}:${changeType}`;
+}
+
+/**
+ * Check whether a notification should fire (sync — uses pre-loaded cooldowns).
+ */
+function shouldNotify(product, changeType, cooldowns) {
+  const key = getCooldownKey(product, changeType);
+  const lastNotified = cooldowns[key] || 0;
   return (Date.now() - lastNotified) > NOTIFICATION_COOLDOWN_MS;
 }
 
 /**
- * Record that we just notified for this product + change type.
+ * Record that we just notified (sync — mutates in-memory cooldowns).
  */
-async function recordNotification(product, changeType) {
-  const { notificationCooldowns = {} } = await chrome.storage.local.get('notificationCooldowns');
-  const key = `${product.productId}:${product.color}:${changeType}`;
-  notificationCooldowns[key] = Date.now();
-
-  // Prune old entries (older than 24h) to prevent unbounded growth
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  for (const [k, ts] of Object.entries(notificationCooldowns)) {
-    if (ts < cutoff) delete notificationCooldowns[k];
-  }
-
-  await chrome.storage.local.set({ notificationCooldowns });
+function recordNotification(product, changeType, cooldowns) {
+  const key = getCooldownKey(product, changeType);
+  cooldowns[key] = Date.now();
 }
 
 /**
@@ -719,7 +743,7 @@ async function recordNotification(product, changeType) {
  * Otherwise send individual notifications.
  * Returns array of { id, url } for notification-click mapping.
  */
-async function groupAndSendNotifications(notifItems) {
+async function groupAndSendNotifications(notifItems, cooldowns) {
   if (notifItems.length === 0) return [];
 
   // Group by change type
@@ -734,18 +758,16 @@ async function groupAndSendNotifications(notifItems) {
 
   for (const [type, items] of Object.entries(byType)) {
     if (items.length >= NOTIFICATION_GROUP_THRESHOLD) {
-      // Send a summary notification
-      const notif = await sendSummaryNotification(type, items);
+      const notif = await sendSummaryNotification(type, items, cooldowns);
       if (notif) results.push(notif);
     } else {
-      // Send individual notifications
       for (const item of items) {
         const notif = await sendNotification(item.product, item.change);
         if (notif) {
           if (item.url) notif.url = item.url;
           results.push(notif);
         }
-        await recordNotification(item.product, type);
+        recordNotification(item.product, type, cooldowns);
       }
     }
   }
@@ -756,7 +778,7 @@ async function groupAndSendNotifications(notifItems) {
 /**
  * Send a single summary notification for multiple items of the same type.
  */
-async function sendSummaryNotification(type, items) {
+async function sendSummaryNotification(type, items, cooldowns) {
   let title = '';
   let message = '';
   const count = items.length;
@@ -820,7 +842,7 @@ async function sendSummaryNotification(type, items) {
 
   // Record cooldown for all items in the batch
   for (const item of items) {
-    await recordNotification(item.product, type);
+    recordNotification(item.product, type, cooldowns);
   }
 
   // Link notification click to the first product in batch
@@ -830,136 +852,139 @@ async function sendSummaryNotification(type, items) {
 // ── Send OS notification ─────────────────────────────────
 
 async function sendNotification(product, change) {
-    let title = '';
-    let message = '';
-    const productLabel = `${product.name} — ${product.color}`;
+  let title = '';
+  let message = '';
+  const productLabel = `${product.name} — ${product.color}`;
 
   switch (change.type) {
     case 'status_change':
-            title = getStatusTitle(change.to);
-            message = `${productLabel}\n${getStatusMessage(change.from, change.to, product.size)}`;
-            break;
+      title = getStatusTitle(change.to);
+      message = `${productLabel}\n${getStatusMessage(change.from, change.to, product.size)}`;
+      break;
     case 'price_change':
-            title = change.to < change.from ? '📉 Price Drop!' : '📈 Price Increased';
-            message = `${productLabel}\n$${change.from} → $${change.to}`;
-            break;
+      title = change.to < change.from ? '📉 Price Drop!' : '📈 Price Increased';
+      message = `${productLabel}\n$${change.from} → $${change.to}`;
+      break;
     case 'went_on_sale':
-            title = '🏷️ Now On Sale!';
-            message = productLabel;
-            break;
+      title = '🏷️ Now On Sale!';
+      message = productLabel;
+      break;
     case 'new_color':
-            title = '🎨 New Color Available!';
-            message = `${product.productLine}\nNew color: ${change.color}`;
-            break;
+      title = '🎨 New Color Available!';
+      message = `${product.productLine}\nNew color: ${change.color}`;
+      break;
     case 'moved_to_markdown':
-            title = '🏷️ Moved to We Made Too Much!';
-            message = `${productLabel}\nNow $${change.salePrice} (was $${change.listPrice})`;
-            break;
+      title = '🏷️ Moved to We Made Too Much!';
+      message = `${productLabel}\nNow $${change.salePrice} (was $${change.listPrice})`;
+      break;
     case 'discontinued':
       title = '\u274C Product Discontinued';
       message = `${productLabel}\nThis product appears to have been removed from the store.`;
       break;
     default:
-            return null;
+      return null;
   }
 
   const notifId = `lulu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    await chrome.notifications.create(notifId, {
-          type: 'basic',
-          iconUrl: 'icons/icon128.png',
-          title,
-          message,
-          priority: 2,
-          requireInteraction: true,
-    });
+  await chrome.notifications.create(notifId, {
+    type: 'basic',
+    iconUrl: 'icons/icon128.png',
+    title,
+    message,
+    priority: 2,
+    requireInteraction: true,
+  });
 
   return { id: notifId, url: product.url };
 }
 
 function getStatusTitle(status) {
-    switch (status) {
-      case 'low_stock': return '⚠️ Almost Sold Out!';
-      case 'sold_out':  return '❌ Sold Out';
-      case 'in_stock':  return '🎉 Back in Stock!';
+  switch (status) {
+    case 'low_stock': return '⚠️ Almost Sold Out!';
+    case 'sold_out': return '❌ Sold Out';
+    case 'in_stock': return '🎉 Back in Stock!';
     case 'discontinued': return '\u274C Discontinued';
-      default:          return '🔔 Status Changed';
-    }
+    default: return '🔔 Status Changed';
+  }
 }
 
 function getStatusMessage(from, to, size) {
-    const sizeLabel = size && size !== 'Not selected' ? ` (Size: ${size})` : '';
-    const labels = { in_stock: 'In Stock', low_stock: 'Low Stock', sold_out: 'Sold Out' };
-    const fromLabel = labels[from] || from;
-    const toLabel = labels[to] || to;
-    return `Status: ${fromLabel} → ${toLabel}${sizeLabel}`;
+  const sizeLabel = size && size !== 'Not selected' ? ` (Size: ${size})` : '';
+  const labels = { in_stock: 'In Stock', low_stock: 'Low Stock', sold_out: 'Sold Out' };
+  return `Status: ${labels[from] || from} → ${labels[to] || to}${sizeLabel}`;
 }
 
 // ── Notification click → open product page ───────────────
 
 chrome.notifications.onClicked.addListener(async (notifId) => {
-    const { notificationMap = {} } = await chrome.storage.local.get('notificationMap');
-    const url = notificationMap[notifId];
-    if (url) {
-          chrome.tabs.create({ url });
-          delete notificationMap[notifId];
-          await chrome.storage.local.set({ notificationMap });
-    }
-    chrome.notifications.clear(notifId);
+  const { notificationMap = {} } = await chrome.storage.local.get('notificationMap');
+  const url = notificationMap[notifId];
+  if (url) {
+    chrome.tabs.create({ url });
+    delete notificationMap[notifId];
+  }
+
+  // Prune notification map entries older than 24h
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  for (const [id] of Object.entries(notificationMap)) {
+    const ts = parseInt(id.match(/lulu-(?:batch-)?(\d+)-/)?.[1] || '0');
+    if (ts > 0 && ts < cutoff) delete notificationMap[id];
+  }
+
+  await chrome.storage.local.set({ notificationMap });
+  chrome.notifications.clear(notifId);
 });
 
 // ── Message handler ──────────────────────────────────────
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === 'addProduct') {
-          addProduct(message.product).then(async (result) => {
-                  await updateBadge();
-                  sendResponse(result);
-          });
-          return true;
-    }
-    if (message.action === 'removeProduct') {
-          removeProduct(message.index).then(async (result) => {
-                  await updateBadge();
-                  sendResponse(result);
-          });
-          return true;
-    }
-    if (message.action === 'getProducts') {
-          chrome.storage.local.get('trackedProducts', (data) => {
-                  sendResponse(data.trackedProducts || []);
-          });
-          return true;
-    }
-    if (message.action === 'checkNow') {
-          checkAllProducts().then(() => sendResponse({ success: true }));
-          return true;
-    }
-    if (message.action === 'clearChangeBadge') {
-          clearChangeMarkers().then(() => sendResponse({ success: true }));
-          return true;
-    }
-    if (message.action === 'productPageChanged') {
-          sendResponse({ ok: true });
-          return true;
-    }
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.action === 'addProduct') {
+    addProduct(message.product).then(async (result) => {
+      await updateBadge();
+      sendResponse(result);
+    });
+    return true;
+  }
+  if (message.action === 'removeProduct') {
+    removeProduct(message.productId, message.color, message.size).then(async (result) => {
+      await updateBadge();
+      sendResponse(result);
+    });
+    return true;
+  }
+  if (message.action === 'getProducts') {
+    chrome.storage.local.get('trackedProducts', (data) => {
+      sendResponse(data.trackedProducts || []);
+    });
+    return true;
+  }
+  if (message.action === 'checkNow') {
+    checkAllProducts().then(() => sendResponse({ success: true }));
+    return true;
+  }
+  if (message.action === 'clearChangeBadge') {
+    clearChangeMarkers().then(() => sendResponse({ success: true }));
+    return true;
+  }
+  // 'productPageChanged' is handled by popup.js — no background action needed
 });
 
 async function addProduct(product) {
-    const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
-    const exists = trackedProducts.some(p =>
-          p.productId === product.productId &&
-          p.color === product.color &&
-          p.size === product.size
-                                          );
-    if (exists) return { success: false, reason: 'Already tracking this product.' };
+  const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
+  const exists = trackedProducts.some(p =>
+    p.productId === product.productId &&
+    p.color === product.color &&
+    p.size === product.size
+  );
+  if (exists) return { success: false, reason: 'Already tracking this product.' };
 
   const newProduct = {
-        ...product,
-        addedAt: Date.now(),
-        trackNewColors: true,
-        lastChange: null,
-        consecutiveFailures: 0,
-        lastFetchError: null,
+    ...product,
+    addedAt: Date.now(),
+    trackNewColors: true,
+    lastChange: null,
+    consecutiveFailures: 0,
+    lastFetchError: null,
     consecutive404s: 0,
     discontinued: false,
     discontinuedAt: null,
@@ -968,49 +993,51 @@ async function addProduct(product) {
 
   // Immediately fetch the live page to establish the correct baseline
   try {
-        const liveData = await fetchProductStatus(newProduct);
-        if (liveData) {
-                if (liveData.availableColors.length > 0) {
-                          newProduct.availableColors = liveData.availableColors;
-                }
-                if (liveData.currentPrice !== null) newProduct.currentPrice = liveData.currentPrice;
-                if (liveData.originalPrice !== null) newProduct.originalPrice = liveData.originalPrice;
-                newProduct.onSale = liveData.onSale;
-                newProduct.stockStatus = liveData.stockStatus;
-                newProduct.lastChecked = Date.now();
-                newProduct.consecutiveFailures = 0;
-                newProduct.lastFetchError = null;
-                console.log(`[LuluTracker] Baseline fetch: ${liveData.availableColors.length} colors stored`);
+    const liveData = await fetchProductStatus(newProduct);
+    if (liveData) {
+      if (liveData.availableColors.length > 0) {
+        newProduct.availableColors = liveData.availableColors;
+      }
+      if (liveData.currentPrice !== null) newProduct.currentPrice = liveData.currentPrice;
+      if (liveData.originalPrice !== null) newProduct.originalPrice = liveData.originalPrice;
+      newProduct.onSale = liveData.onSale;
+      newProduct.stockStatus = liveData.stockStatus;
+      newProduct.lastChecked = Date.now();
+      newProduct.consecutiveFailures = 0;
+      newProduct.lastFetchError = null;
+      console.log(`[LuluTracker] Baseline fetch: ${liveData.availableColors.length} colors stored`);
 
-      // Initialize price history with the baseline price
       if (newProduct.currentPrice) {
         appendPriceHistory(newProduct, newProduct.currentPrice, newProduct.onSale);
       }
-        }
+    }
   } catch (err) {
-        console.warn('[LuluTracker] Baseline fetch failed, using content script data:', err);
+    console.warn('[LuluTracker] Baseline fetch failed, using content script data:', err);
   }
 
   trackedProducts.push(newProduct);
-    await chrome.storage.local.set({ trackedProducts });
-    return { success: true };
+  await chrome.storage.local.set({ trackedProducts });
+  return { success: true };
 }
 
-async function removeProduct(index) {
+async function removeProduct(productId, color, size) {
     const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
-    if (index >= 0 && index < trackedProducts.length) {
-          trackedProducts.splice(index, 1);
-          await chrome.storage.local.set({ trackedProducts });
-          return { success: true };
+    const index = trackedProducts.findIndex(p =>
+        p.productId === productId && p.color === color && p.size === size
+    );
+    if (index >= 0) {
+        trackedProducts.splice(index, 1);
+        await chrome.storage.local.set({ trackedProducts });
+        return { success: true };
     }
     return { success: false };
 }
 
 async function clearChangeMarkers() {
-    const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
-    for (const p of trackedProducts) {
-          p.lastChange = null;
-    }
-    await chrome.storage.local.set({ trackedProducts });
-    await updateBadge();
+  const { trackedProducts = [] } = await chrome.storage.local.get('trackedProducts');
+  for (const p of trackedProducts) {
+    p.lastChange = null;
+  }
+  await chrome.storage.local.set({ trackedProducts });
+  await updateBadge();
 }

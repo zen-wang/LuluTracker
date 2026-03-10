@@ -33,7 +33,9 @@
 
   function isIntlSite() {
     const host = window.location.hostname;
-    return host.includes('lululemon.com') && host !== 'shop.lululemon.com';
+    return host.includes('lululemon.com') &&
+           host !== 'shop.lululemon.com' &&
+           host !== 'www.lululemon.com';
   }
 
   // ═══════════════════════════════════════════════════════
@@ -516,6 +518,11 @@
     // URL changed (US site color/size switch, or page navigation)
     if (window.location.href !== lastUrl) {
       onProductChanged();
+      // Stop polling if navigated away from a product page
+      if (!window.location.pathname.includes('/p/') && pollIntervalId) {
+        clearInterval(pollIntervalId);
+        pollIntervalId = null;
+      }
       return;
     }
     // DOM state changed (SFCC site color/size switch without URL change)
@@ -533,14 +540,20 @@
     titleObserver.observe(titleEl, { childList: true, characterData: true, subtree: true });
   }
 
-  // Method 2: Watch main content area for DOM changes
+  // Method 2: Watch main content area for DOM changes (debounced)
+  let changeCheckTimeout = null;
+  function debouncedCheckForChanges() {
+    if (changeCheckTimeout) clearTimeout(changeCheckTimeout);
+    changeCheckTimeout = setTimeout(checkForChanges, 200);
+  }
+
   const mainContent = document.querySelector('[data-testid="main-details"]') ||
                       document.querySelector('[data-testid="layout-children"]') ||
                       document.querySelector('.product-detail') ||
                       document.querySelector('main') ||
                       document.body;
 
-  const contentObserver = new MutationObserver(checkForChanges);
+  const contentObserver = new MutationObserver(debouncedCheckForChanges);
   contentObserver.observe(mainContent, { childList: true, subtree: true });
 
   // Method 3: Listen for clicks on SFCC color swatches and size buttons
@@ -554,18 +567,19 @@
     });
   }
 
-  // Method 4: Poll as fallback
-  setInterval(checkForChanges, 1500);
+  // Method 4: Poll as fallback (only on product pages)
+  let pollIntervalId = null;
+  if (window.location.pathname.includes('/p/')) {
+    pollIntervalId = setInterval(checkForChanges, 1500);
+  }
 
   // ═══════════════════════════════════════════════════════
   //  Message listener
   // ═══════════════════════════════════════════════════════
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.action === 'extractProductData') {
-      const data = extractProductData();
-      sendResponse(data);
+      sendResponse(extractProductData());
     }
-    return true;
   });
 })();
