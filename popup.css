@@ -698,6 +698,112 @@ body {
 }
 
 
+/* ── Compare Button ──────────────────────────────────── */
+.btn-compare {
+  background: none;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  margin-left: auto;
+  white-space: nowrap;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.btn-compare:hover {
+  background: #e3f2fd;
+  border-color: #90caf9;
+  color: #1565c0;
+}
+.btn-compare.active {
+  background: #e3f2fd;
+  border-color: #1565c0;
+  color: #1565c0;
+}
+
+/* ── Comparison Row ─────────────────────────────────── */
+.comparison-row {
+  margin-top: 6px;
+  padding: 6px 8px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e8e8e8;
+  animation: fadeIn 0.2s ease;
+}
+.comparison-native {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #333;
+}
+.comp-region {
+  white-space: nowrap;
+}
+.comp-region.cheapest {
+  color: #2e7d32;
+  background: #e8f5e9;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.comp-region.unavailable {
+  color: #bbb;
+  font-weight: 400;
+}
+.comp-sep {
+  color: #ccc;
+  margin: 0 1px;
+}
+.comparison-converted {
+  font-size: 11px;
+  color: #888;
+  margin-top: 3px;
+}
+
+/* ── Comparison Loading ─────────────────────────────── */
+.comparison-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #888;
+  animation: fadeIn 0.2s ease;
+}
+.spinner-small {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #e0e0e0;
+  border-top-color: #1565c0;
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* ── Currency Selector ──────────────────────────────── */
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.currency-selector {
+  padding: 2px 4px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #666;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.currency-selector:focus {
+  border-color: #1565c0;
+}
+
 /* ── Discontinued Product ────────────────────────────── */
 .status-badge.discontinued {
   background: #f5f5f5;

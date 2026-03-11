@@ -399,7 +399,8 @@ function parseProductHtml(html, product) {
 
   const isIntl = product.url.includes('.html') ||
     product.url.includes('lululemon.com.hk') ||
-    product.url.includes('lululemon.com.au');
+    product.url.includes('lululemon.com.au') ||
+    product.url.includes('lululemon.co.jp');
 
   // ── Strategy 1: Parse __NEXT_DATA__ (US site) ──
   const nextDataMatch = html.match(
@@ -833,7 +834,7 @@ async function sendSummaryNotification(type, items, cooldowns) {
   const notifId = `lulu-batch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   await chrome.notifications.create(notifId, {
     type: 'basic',
-    iconUrl: 'icons/icon128.png',
+    iconUrl: items[0]?.product?.image || 'icons/icon128.png',
     title,
     message,
     priority: 2,
@@ -888,7 +889,7 @@ async function sendNotification(product, change) {
   const notifId = `lulu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   await chrome.notifications.create(notifId, {
     type: 'basic',
-    iconUrl: 'icons/icon128.png',
+    iconUrl: product.image || 'icons/icon128.png',
     title,
     message,
     priority: 2,
@@ -966,6 +967,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     clearChangeMarkers().then(() => sendResponse({ success: true }));
     return true;
   }
+  if (message.action === 'comparePrices') {
+    handleComparePrices(message).then(sendResponse);
+    return true;
+  }
+  if (message.action === 'getExchangeRates') {
+    fetchExchangeRates()
+      .then(rates => sendResponse({ rates }))
+      .catch(() => sendResponse({ rates: null }));
+    return true;
+  }
   // 'productPageChanged' is handled by popup.js — no background action needed
 });
 
@@ -1031,6 +1042,113 @@ async function removeProduct(productId, color, size) {
         return { success: true };
     }
     return { success: false };
+}
+
+// ══════════════════════════════════════════════════════════
+// Cross-region price comparison
+// ══════════════════════════════════════════════════════════
+
+const REGION_URLS = {
+  us: (pid) => `https://shop.lululemon.com/p/_/_/${pid}`,
+  hk: (pid) => `https://www.lululemon.com.hk/en-hk/p/_/${pid}.html`,
+  au: (pid) => `https://www.lululemon.com.au/en-au/p/_/${pid}.html`,
+  jp: (pid) => `https://www.lululemon.co.jp/ja-jp/p/_/${pid}.html`,
+};
+const REGION_CURRENCY_MAP = { us: 'USD', hk: 'HKD', au: 'AUD', jp: 'JPY' };
+
+async function fetchExchangeRates() {
+  const { exchangeRates } = await chrome.storage.local.get('exchangeRates');
+  if (exchangeRates && (Date.now() - exchangeRates.lastUpdated) < 24 * 60 * 60 * 1000) {
+    return exchangeRates.rates;
+  }
+  const response = await fetch('https://open.er-api.com/v6/latest/USD');
+  const data = await response.json();
+  if (data.result === 'success') {
+    const cached = { rates: data.rates, lastUpdated: Date.now() };
+    await chrome.storage.local.set({ exchangeRates: cached });
+    return data.rates;
+  }
+  if (exchangeRates) return exchangeRates.rates;
+  throw new Error('Failed to fetch exchange rates');
+}
+
+function extractFirstVariantPrice(html) {
+  const ldMatches = [...html.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)];
+  for (const m of ldMatches) {
+    try {
+      const ld = JSON.parse(m[1]);
+      if (ld['@type'] === 'ProductGroup' && ld.hasVariant?.length > 0) {
+        const p = parseFloat(ld.hasVariant[0].offers?.price);
+        if (p > 0) return p;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+async function handleComparePrices({ productId, trackedRegion, trackedPrice, trackedCurrency }) {
+  const regions = ['us', 'hk', 'au', 'jp'];
+  const results = {};
+
+  results[trackedRegion] = {
+    price: trackedPrice,
+    currency: trackedCurrency || REGION_CURRENCY_MAP[trackedRegion],
+    available: trackedPrice !== null && trackedPrice !== undefined,
+  };
+
+  const otherRegions = regions.filter(r => r !== trackedRegion);
+  const fetchPromises = otherRegions.map(async (region) => {
+    const url = REGION_URLS[region](productId);
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+        },
+      });
+      if (!response.ok) {
+        return { region, data: { price: null, currency: REGION_CURRENCY_MAP[region], available: false } };
+      }
+      const html = await response.text();
+      const fakeProduct = { url, color: null, size: null };
+      const parsed = parseProductHtml(html, fakeProduct);
+
+      // Fallback: if parser didn't find a price (e.g. no color match), grab first variant from JSON-LD
+      if (parsed.currentPrice === null) {
+        parsed.currentPrice = extractFirstVariantPrice(html);
+      }
+
+      return {
+        region,
+        data: {
+          price: parsed.currentPrice,
+          currency: REGION_CURRENCY_MAP[region],
+          stockStatus: parsed.stockStatus,
+          onSale: parsed.onSale,
+          available: parsed.currentPrice !== null,
+        },
+      };
+    } catch (err) {
+      console.warn(`[LuluTracker] Compare fetch failed for ${region}:`, err.message);
+      return { region, data: { price: null, currency: REGION_CURRENCY_MAP[region], available: false } };
+    }
+  });
+
+  const settled = await Promise.allSettled(fetchPromises);
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      results[result.value.region] = result.value.data;
+    }
+  }
+
+  let rates = null;
+  try {
+    rates = await fetchExchangeRates();
+  } catch (e) {
+    console.warn('[LuluTracker] Failed to fetch exchange rates:', e);
+  }
+
+  return { regions: results, rates };
 }
 
 async function clearChangeMarkers() {

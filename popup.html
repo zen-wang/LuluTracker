@@ -87,7 +87,15 @@
   <!-- Footer -->
   <footer class="footer">
     <span id="last-check"></span>
-    <span>Checks every hour</span>
+    <div class="footer-right">
+      <select id="currency-selector" class="currency-selector" title="Currency for price comparison">
+        <option value="USD">USD</option>
+        <option value="HKD">HKD</option>
+        <option value="AUD">AUD</option>
+        <option value="JPY">JPY</option>
+      </select>
+      <span>Checks every hour</span>
+    </div>
   </footer>
 
   <script src="popup.js"></script>

@@ -14,7 +14,9 @@
     "https://shop.lululemon.com/*",
     "https://www.lululemon.com.hk/*",
     "https://www.lululemon.com.au/*",
-    "https://www.lululemon.com/*"
+    "https://www.lululemon.co.jp/*",
+    "https://www.lululemon.com/*",
+    "https://open.er-api.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -38,6 +40,7 @@
         "https://shop.lululemon.com/*",
         "https://www.lululemon.com.hk/*",
         "https://www.lululemon.com.au/*",
+        "https://www.lululemon.co.jp/*",
         "https://www.lululemon.com/*"
       ],
       "js": ["content.js"],

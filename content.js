@@ -33,9 +33,10 @@
 
   function isIntlSite() {
     const host = window.location.hostname;
-    return host.includes('lululemon.com') &&
-           host !== 'shop.lululemon.com' &&
-           host !== 'www.lululemon.com';
+    return (host.includes('lululemon.com') &&
+            host !== 'shop.lululemon.com' &&
+            host !== 'www.lululemon.com') ||
+           host.includes('lululemon.co.jp');
   }
 
   // ═══════════════════════════════════════════════════════
@@ -489,7 +490,8 @@
       stockStatus, url: window.location.href, image,
       productLine: name, productId, availableColors: [...colorMap.values()],
       region: window.location.hostname.includes('.hk') ? 'HK' :
-              window.location.hostname.includes('.au') ? 'AU' : 'INTL',
+              window.location.hostname.includes('.au') ? 'AU' :
+              window.location.hostname.includes('.co.jp') ? 'JP' : 'INTL',
       lastChecked: Date.now(),
     };
   }

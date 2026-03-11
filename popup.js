@@ -37,6 +37,58 @@ const SORT_OPTIONS_AU = {
   'Z-A': 'Z → A',
 };
 
+// ══════════════════════════════════════════════════════════
+//  Cross-region price comparison state
+// ══════════════════════════════════════════════════════════
+
+const REGION_FLAGS = { us: '\u{1F1FA}\u{1F1F8}', hk: '\u{1F1ED}\u{1F1F0}', au: '\u{1F1E6}\u{1F1FA}', jp: '\u{1F1EF}\u{1F1F5}' };
+const REGION_CURRENCY = { us: 'USD', hk: 'HKD', au: 'AUD', jp: 'JPY' };
+const compareCache = new Map();
+let currentCompareCurrency = 'USD';
+let cachedExchangeRates = null;
+
+function getTrackedRegion(url) {
+  if (url.includes('shop.lululemon.com')) return 'us';
+  if (url.includes('lululemon.com.hk')) return 'hk';
+  if (url.includes('lululemon.com.au')) return 'au';
+  if (url.includes('lululemon.co.jp')) return 'jp';
+  return 'us';
+}
+
+function getCompareKey(product) {
+  return `${product.productId}:${product.color}:${product.size}`;
+}
+
+function formatNativePrice(price, currency) {
+  if (price === null || price === undefined) return 'N/A';
+  switch (currency) {
+    case 'USD': return `$${price}`;
+    case 'HKD': return `HK$${price}`;
+    case 'AUD': return `A$${price}`;
+    case 'JPY': return `\u00A5${Math.round(price).toLocaleString()}`;
+    default: return `$${price}`;
+  }
+}
+
+function formatConvertedPrice(amount, currency) {
+  if (amount === null || amount === undefined) return 'N/A';
+  switch (currency) {
+    case 'USD': return `US$${amount.toFixed(2)}`;
+    case 'HKD': return `HK$${amount.toFixed(2)}`;
+    case 'AUD': return `A$${amount.toFixed(2)}`;
+    case 'JPY': return `\u00A5${Math.round(amount).toLocaleString()}`;
+    default: return `$${amount.toFixed(2)}`;
+  }
+}
+
+function convertCurrency(amount, fromCurrency, toCurrency, rates) {
+  if (!rates || amount === null || amount === undefined) return null;
+  if (fromCurrency === toCurrency) return amount;
+  const fromRate = rates[fromCurrency] || 1;
+  const toRate = rates[toCurrency] || 1;
+  return (amount / fromRate) * toRate;
+}
+
 /**
  * Detect if a URL belongs to any Lululemon domain.
  * Returns { isLulu: true, region: 'us'|'hk'|'au'|'other', isUS: bool }
@@ -48,7 +100,8 @@ function detectLuluDomain(url) {
     if (host === 'shop.lululemon.com') return { isLulu: true, region: 'us', isUS: true };
     if (host === 'www.lululemon.com.hk') return { isLulu: true, region: 'hk', isUS: false };
     if (host === 'www.lululemon.com.au') return { isLulu: true, region: 'au', isUS: false };
-    if (host.includes('lululemon.com')) return { isLulu: true, region: 'other', isUS: false };
+    if (host === 'www.lululemon.co.jp') return { isLulu: true, region: 'jp', isUS: false };
+    if (host.includes('lululemon.com') || host.includes('lululemon.co.jp')) return { isLulu: true, region: 'other', isUS: false };
     return { isLulu: false, region: null, isUS: false };
   } catch { return { isLulu: false, region: null, isUS: false }; }
 }
@@ -116,6 +169,17 @@ async function init() {
   // Tab switching
   document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+  });
+
+  // Currency selector
+  const { compareCurrency } = await chrome.storage.local.get('compareCurrency');
+  currentCompareCurrency = compareCurrency || 'USD';
+  const currencySelect = document.getElementById('currency-selector');
+  currencySelect.value = currentCompareCurrency;
+  currencySelect.addEventListener('change', async (e) => {
+    currentCompareCurrency = e.target.value;
+    await chrome.storage.local.set({ compareCurrency: currentCompareCurrency });
+    rerenderVisibleComparisons();
   });
 
   // Products tab
@@ -237,7 +301,8 @@ async function renderProductList() {
     if (product.discontinued) card.classList.add('is-discontinued');
 
     card.addEventListener('click', (e) => {
-      if (e.target.closest('.btn-delete') || e.target.closest('.toggle')) return;
+      if (e.target.closest('.btn-delete') || e.target.closest('.toggle') ||
+          e.target.closest('.btn-compare') || e.target.closest('.comparison-row')) return;
       chrome.tabs.create({ url: product.url });
     });
 
@@ -272,6 +337,9 @@ async function renderProductList() {
       : '';
 
     const priceHistoryHtml = getPriceHistoryHtml(product);
+    const compareButtonHtml = product.discontinued
+      ? ''
+      : '<button class="btn-compare" title="Compare prices across regions">\u{1F310}</button>';
 
     card.innerHTML = `
       ${thumbHtml}
@@ -287,6 +355,7 @@ async function renderProductList() {
             ${discontinuedHtml}
           ${priceHtml}
           ${markdownHtml}
+          ${compareButtonHtml}
         </div>
         ${priceHistoryHtml}
         <div class="product-settings">
@@ -296,6 +365,7 @@ async function renderProductList() {
           </label>
           <span class="toggle-label">New colors</span>
         </div>
+        <div class="comparison-container"></div>
       </div>
       <button class="btn-delete" data-product-id="${escapeHtml(product.productId)}" data-color="${escapeHtml(product.color)}" data-size="${escapeHtml(product.size)}" title="Stop tracking">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
@@ -325,6 +395,14 @@ async function renderProductList() {
       showMessage('Product removed.', 'info');
       await renderProductList();
     });
+
+    const compareBtn = card.querySelector('.btn-compare');
+    if (compareBtn) {
+      compareBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleCompare(product, card, compareBtn);
+      });
+    }
 
     const toggle = card.querySelector('.toggle input');
     toggle.addEventListener('change', async (e) => {
@@ -831,6 +909,120 @@ function getActiveFilters(cardEl) {
     filters.push(c.dataset.code);
   });
   return filters;
+}
+
+// ══════════════════════════════════════════════════════════
+//  Price comparison
+// ══════════════════════════════════════════════════════════
+
+async function handleCompare(product, card, btn) {
+  const container = card.querySelector('.comparison-container');
+  const key = getCompareKey(product);
+
+  // Toggle off
+  if (btn.classList.contains('active')) {
+    btn.classList.remove('active');
+    container.innerHTML = '';
+    return;
+  }
+
+  btn.classList.add('active');
+
+  // Use cache if available
+  if (compareCache.has(key)) {
+    const cached = compareCache.get(key);
+    cachedExchangeRates = cached.rates;
+    renderComparisonRow(container, cached.regions, cached.rates, currentCompareCurrency);
+    return;
+  }
+
+  // Show loading
+  container.innerHTML = '<div class="comparison-loading"><div class="spinner-small"></div><span>Comparing prices\u2026</span></div>';
+
+  const trackedRegion = getTrackedRegion(product.url);
+  const result = await chrome.runtime.sendMessage({
+    action: 'comparePrices',
+    productId: product.productId,
+    trackedRegion,
+    trackedPrice: product.currentPrice,
+    trackedCurrency: REGION_CURRENCY[trackedRegion],
+  });
+
+  if (!result || !result.regions) {
+    container.innerHTML = '<div class="comparison-loading" style="color:#c62828">Comparison failed</div>';
+    return;
+  }
+
+  compareCache.set(key, result);
+  cachedExchangeRates = result.rates;
+  renderComparisonRow(container, result.regions, result.rates, currentCompareCurrency);
+}
+
+function renderComparisonRow(container, regions, rates, displayCurrency) {
+  const regionOrder = ['us', 'hk', 'au', 'jp'];
+  const entries = [];
+  let cheapestUSD = Infinity;
+  let cheapestRegion = null;
+
+  for (const r of regionOrder) {
+    const data = regions[r];
+    if (!data || !data.available || data.price === null) {
+      entries.push({ region: r, price: null, currency: null, available: false, convertedUSD: null });
+      continue;
+    }
+    const convertedUSD = rates ? convertCurrency(data.price, data.currency, 'USD', rates) : null;
+    entries.push({ region: r, price: data.price, currency: data.currency, available: true, convertedUSD });
+    if (convertedUSD !== null && convertedUSD < cheapestUSD) {
+      cheapestUSD = convertedUSD;
+      cheapestRegion = r;
+    }
+  }
+
+  // Native prices row
+  const nativeParts = entries.map(e => {
+    const flag = REGION_FLAGS[e.region];
+    if (!e.available) return `<span class="comp-region unavailable">${flag} N/A</span>`;
+    const cls = e.region === cheapestRegion ? 'comp-region cheapest' : 'comp-region';
+    return `<span class="${cls}">${flag} ${escapeHtml(formatNativePrice(e.price, e.currency))}</span>`;
+  });
+  const nativeHtml = nativeParts.join('<span class="comp-sep">|</span>');
+
+  // Converted prices row
+  let convertedHtml = '';
+  if (rates) {
+    const convertedParts = entries.map(e => {
+      if (!e.available || e.price === null) return 'N/A';
+      const converted = convertCurrency(e.price, e.currency, displayCurrency, rates);
+      return formatConvertedPrice(converted, displayCurrency);
+    });
+    convertedHtml = `<div class="comparison-converted">(${convertedParts.join(' | ')})</div>`;
+  }
+
+  container.innerHTML = `
+    <div class="comparison-row">
+      <div class="comparison-native">${nativeHtml}</div>
+      ${convertedHtml}
+    </div>
+  `;
+}
+
+function rerenderVisibleComparisons() {
+  document.querySelectorAll('.product-card').forEach(card => {
+    const btn = card.querySelector('.btn-compare');
+    if (!btn || !btn.classList.contains('active')) return;
+    const container = card.querySelector('.comparison-container');
+    if (!container || container.innerHTML === '') return;
+
+    // Find the product key from the delete button's data attributes
+    const delBtn = card.querySelector('.btn-delete');
+    if (!delBtn) return;
+    const key = `${delBtn.dataset.productId}:${delBtn.dataset.color}:${delBtn.dataset.size}`;
+
+    const cached = compareCache.get(key);
+    if (cached) {
+      renderComparisonRow(container, cached.regions, cached.rates, currentCompareCurrency);
+    }
+  });
 }
 
 // ══════════════════════════════════════════════════════════
