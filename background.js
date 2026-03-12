@@ -1086,7 +1086,7 @@ function extractFirstVariantPrice(html) {
   return null;
 }
 
-async function handleComparePrices({ productId, trackedRegion, trackedPrice, trackedCurrency }) {
+async function handleComparePrices({ productId, trackedRegion, trackedPrice, trackedCurrency, trackedColor }) {
   const regions = ['us', 'hk', 'au', 'jp'];
   const results = {};
 
@@ -1100,17 +1100,12 @@ async function handleComparePrices({ productId, trackedRegion, trackedPrice, tra
   const fetchPromises = otherRegions.map(async (region) => {
     const url = REGION_URLS[region](productId);
     try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          'Accept': 'text/html,application/xhtml+xml',
-        },
-      });
-      if (!response.ok) {
-        return { region, data: { price: null, currency: REGION_CURRENCY_MAP[region], available: false } };
-      }
-      const html = await response.text();
-      const fakeProduct = { url, color: null, size: null };
+const { html, ok, error } = await fetchWithRetry(url);
+              if (!ok) {
+                          console.warn(`[LuluTracker] Compare: ${region} fetch failed: ${error}`);
+                          return { region, data: { price: null, currency: REGION_CURRENCY_MAP[region], available: false } };
+              }
+              const fakeProduct = { url, color: trackedColor || null, size: null };
       const parsed = parseProductHtml(html, fakeProduct);
 
       // Fallback: if parser didn't find a price (e.g. no color match), grab first variant from JSON-LD
