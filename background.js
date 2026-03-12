@@ -1056,6 +1056,12 @@ const REGION_URLS = {
 };
 const REGION_CURRENCY_MAP = { us: 'USD', hk: 'HKD', au: 'AUD', jp: 'JPY' };
 
+const SFCC_API_CONFIG = {
+    hk: { host: 'https://www.lululemon.com.hk', site: 'Sites-HK-Site', locale: 'en_HK' },
+    au: { host: 'https://www.lululemon.com.au', site: 'Sites-AU-Site', locale: 'en_AU' },
+    jp: { host: 'https://www.lululemon.co.jp', site: 'Sites-JP-Site', locale: 'ja_JP' },
+};
+
 async function fetchExchangeRates() {
   const { exchangeRates } = await chrome.storage.local.get('exchangeRates');
   if (exchangeRates && (Date.now() - exchangeRates.lastUpdated) < 24 * 60 * 60 * 1000) {
@@ -1086,6 +1092,78 @@ function extractFirstVariantPrice(html) {
   return null;
 }
 
+/**
+ * Fetch price from SFCC international sites using the Product-ShowQuickView JSON API.
+  * This is more reliable than fetching full HTML pages because:
+   * - Returns structured JSON (no HTML parsing needed)
+    * - Smaller response size (~120KB vs ~500KB HTML)
+     * - Less likely to be blocked by bot detection
+      */
+async function fetchSfccPrice(region, productId) {
+    const config = SFCC_API_CONFIG[region];
+    if (!config) return null;
+
+    const url = `${config.host}/on/demandware.store/${config.site}/${config.locale}/Product-ShowQuickView?pid=${productId}`;
+    console.log(`[LuluTracker] SFCC API fetch: ${region} → ${url}`);
+
+    try {
+          const response = await fetch(url, {
+                  headers: {
+                            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                            'Accept': 'application/json, text/html',
+                  },
+          });
+
+          if (!response.ok) {
+                  console.warn(`[LuluTracker] SFCC API ${region}: HTTP ${response.status}`);
+                  return null;
+          }
+
+          const data = await response.json();
+          const product = data?.product;
+          if (!product) {
+                  console.warn(`[LuluTracker] SFCC API ${region}: No product in response`);
+                  return null;
+          }
+
+          // Extract price — SFCC returns either range (min/max) or flat price
+          let price = null;
+          const priceData = product.price;
+          if (priceData?.min?.sales?.value) {
+                  price = priceData.min.sales.value;
+          } else if (priceData?.sales?.value) {
+                  price = priceData.sales.value;
+          }
+
+          // Detect if on sale (list price > sales price)
+          let onSale = false;
+          let originalPrice = null;
+          if (priceData?.min?.list?.value && priceData.min.list.value > price) {
+                  onSale = true;
+                  originalPrice = priceData.min.list.value;
+          } else if (priceData?.list?.value && priceData.list.value > price) {
+                  onSale = true;
+                  originalPrice = priceData.list.value;
+          }
+
+          // Check availability
+          const available = product.available !== false && price !== null;
+
+          console.log(`[LuluTracker] SFCC API ${region}: price=${price}, currency=${REGION_CURRENCY_MAP[region]}, available=${available}`);
+
+          return {
+                  price,
+                  currency: REGION_CURRENCY_MAP[region],
+                  available,
+                  onSale,
+                  originalPrice,
+          };
+    } catch (err) {
+          console.warn(`[LuluTracker] SFCC API ${region} error:`, err.message);
+          return null;
+    }
+}
+
 async function handleComparePrices({ productId, trackedRegion, trackedPrice, trackedCurrency, trackedColor }) {
   const regions = ['us', 'hk', 'au', 'jp'];
   const results = {};
@@ -1098,6 +1176,15 @@ async function handleComparePrices({ productId, trackedRegion, trackedPrice, tra
 
   const otherRegions = regions.filter(r => r !== trackedRegion);
   const fetchPromises = otherRegions.map(async (region) => {
+          // Use SFCC JSON API for international regions (more reliable than HTML parsing)
+          if (SFCC_API_CONFIG[region]) {
+                    const sfccResult = await fetchSfccPrice(region, productId);
+                    if (sfccResult) {
+                                return { region, data: sfccResult };
+                    }
+                    return { region, data: { price: null, currency: REGION_CURRENCY_MAP[region], available: false } };
+          }
+          // US region: use HTML fetch + parse approach
     const url = REGION_URLS[region](productId);
     try {
 const { html, ok, error } = await fetchWithRetry(url);
