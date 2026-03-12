@@ -946,6 +946,7 @@ async function handleCompare(product, card, btn) {
     trackedRegion,
     trackedPrice: product.currentPrice,
     trackedCurrency: REGION_CURRENCY[trackedRegion],
+    trackedColor: product.color,
   });
 
   if (!result || !result.regions) {
